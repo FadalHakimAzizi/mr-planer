@@ -1,0 +1,132 @@
+{
+  "name": "WF-04 Script Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "generate-script",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=⏳ Membuat script untuk konten #{{ $json.rowNumber }}...",
+        "additionalFields": {}
+      },
+      "id": "send-loading",
+      "name": "Send Loading",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [460, 200],
+      "credentials": { "telegramApi": { "id": "1", "name": "Telegram Bot" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ci.*, cp.product_id, p.name as product_name, p.selling_points\nFROM content_items ci\nJOIN content_plans cp ON ci.plan_id = cp.id\nJOIN products p ON cp.product_id = p.id\nWHERE cp.user_id = $1\n  AND ci.row_number = $2\nORDER BY cp.created_at DESC\nLIMIT 1",
+        "options": {
+          "queryParams": "={{ JSON.stringify([$json.dbUserId, $json.rowNumber]) }}"
+        }
+      },
+      "id": "get-content-item",
+      "name": "Get Content Item",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 400],
+      "credentials": { "postgres": { "id": "2", "name": "Supabase DB" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $json;\nconst prompt = `Kamu adalah script writer konten TikTok untuk affiliator Indonesia.\\nBuat script video TikTok berdasarkan brief berikut:\\n\\nJudul: ${item.title}\\nJenis Konten: ${item.content_type}\\nHook: ${item.hook}\\nCaption: ${item.caption}\\nProduk: ${item.product_name}\\nSelling Points: ${(item.selling_points || []).join(', ')}\\n\\nOutput HANYA JSON (tanpa markdown):\\n{\\n  \"hook_text\": \"teks hook 3-5 detik pertama yang langsung menarik\",\\n  \"problem\": \"narasi problem/pain point relatable (10-15 detik)\",\\n  \"solution\": \"narasi solusi dengan produk (15-20 detik)\",\\n  \"cta\": \"call-to-action kuat di akhir (5-10 detik)\",\\n  \"visual_direction\": \"panduan visual: angle kamera, props, setting, transisi\",\\n  \"audio_cue\": \"rekomendasi sound/musik TikTok trending sesuai mood\"\\n}`;\nreturn [{ json: { prompt, item } }];"
+      },
+      "id": "build-prompt",
+      "name": "Build Script Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [{
+            "name": "=",
+            "value": "={{ JSON.stringify({ model: 'meta-llama/llama-3.3-70b-instruct', messages: [{ role: 'user', content: $json.prompt }], temperature: 0.8, max_tokens: 2048 }) }}"
+          }]
+        },
+        "options": {}
+      },
+      "id": "call-openrouter",
+      "name": "Generate Script with AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 400],
+      "credentials": { "httpHeaderAuth": { "id": "4", "name": "OpenRouter API" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.choices[0].message.content;\nlet script;\ntry {\n  script = JSON.parse(raw.replace(/```json\\n?|\\n?```/g, '').trim());\n} catch(e) {\n  script = { hook_text: '', problem: '', solution: '', cta: '', visual_direction: '', audio_cue: '' };\n}\nconst item = $('Build Script Prompt').item.json.item;\nreturn [{ json: { script, item } }];"
+      },
+      "id": "parse-script",
+      "name": "Parse Script",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.NEXT_PUBLIC_URL }}/api/create-doc",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [{
+            "name": "=",
+            "value": "={{ JSON.stringify({ title: $json.item.title, productName: $json.item.product_name, script: $json.script, itemId: $json.item.id, userId: $('Webhook Trigger').item.json.dbUserId }) }}"
+          }]
+        },
+        "options": {}
+      },
+      "id": "create-doc",
+      "name": "Create Google Docs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Webhook Trigger').item.json.chatId }}",
+        "text": "=✅ *Script Selesai!*\n\n📝 *{{ $('Parse Script').item.json.item.title }}*\n\n🎯 *Hook:* {{ $('Parse Script').item.json.script.hook_text }}\n\n📄 Script lengkap ada di Google Docs:\n{{ $json.docsUrl }}\n\nSelamat produksi konten! 🎬",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "send-result",
+      "name": "Send Script Result",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1560, 400],
+      "credentials": { "telegramApi": { "id": "1", "name": "Telegram Bot" } }
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[
+        { "node": "Send Loading", "type": "main", "index": 0 },
+        { "node": "Get Content Item", "type": "main", "index": 0 }
+      ]]
+    },
+    "Get Content Item": { "main": [[{ "node": "Build Script Prompt", "type": "main", "index": 0 }]] },
+    "Build Script Prompt": { "main": [[{ "node": "Generate Script with AI", "type": "main", "index": 0 }]] },
+    "Generate Script with AI": { "main": [[{ "node": "Parse Script", "type": "main", "index": 0 }]] },
+    "Parse Script": { "main": [[{ "node": "Create Google Docs", "type": "main", "index": 0 }]] },
+    "Create Google Docs": { "main": [[{ "node": "Send Script Result", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

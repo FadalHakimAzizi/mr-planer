@@ -1,0 +1,119 @@
+{
+  "name": "WF-05 Google Trends Fetcher",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 23 * * *" }] }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule (Daily 06:00 WIB)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fetch-trends",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "On-Demand Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 500]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "products",
+        "options": { "limit": 50 }
+      },
+      "id": "get-products",
+      "name": "Get All Products",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 400],
+      "credentials": { "postgres": { "id": "2", "name": "Supabase DB" } }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "split-products",
+      "name": "Split by Product",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [700, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const product = $json;\nconst name = product.name || '';\nconst keywords = [\n  name,\n  `${name} review`,\n  `${name} murah`,\n  `${name} terbaik`,\n];\nreturn keywords.map(k => ({ json: { keyword: k, productId: product.id } }));"
+      },
+      "id": "generate-keywords",
+      "name": "Generate Keywords",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 400]
+    },
+    {
+      "parameters": {
+        "url": "https://serpapi.com/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "engine", "value": "google_trends" },
+            { "name": "q", "value": "={{ $json.keyword }}" },
+            { "name": "geo", "value": "ID" },
+            { "name": "api_key", "value": "={{ $env.SERPAPI_KEY }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch-trends",
+      "name": "Fetch from SerpAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $json;\nconst keyword = $('Generate Keywords').item.json.keyword;\nconst productId = $('Generate Keywords').item.json.productId;\nconst timelineData = data.interest_over_time?.timeline_data || [];\nconst avgScore = timelineData.length > 0\n  ? Math.round(timelineData.reduce((s, d) => s + (d.values?.[0]?.extracted_value || 0), 0) / timelineData.length)\n  : 0;\nreturn [{ json: { keyword, productId, trendScore: avgScore } }];"
+      },
+      "id": "extract-score",
+      "name": "Extract Trend Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1360, 400]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": "public",
+        "table": "keywords",
+        "columns": "product_id, keyword, trend_score, region, fetched_at",
+        "conflictColumns": "product_id, keyword",
+        "options": {}
+      },
+      "id": "upsert-keyword",
+      "name": "Upsert Keyword",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1580, 400],
+      "credentials": { "postgres": { "id": "2", "name": "Supabase DB" } }
+    }
+  ],
+  "connections": {
+    "Schedule (Daily 06:00 WIB)": { "main": [[{ "node": "Get All Products", "type": "main", "index": 0 }]] },
+    "On-Demand Webhook": { "main": [[{ "node": "Get All Products", "type": "main", "index": 0 }]] },
+    "Get All Products": { "main": [[{ "node": "Split by Product", "type": "main", "index": 0 }]] },
+    "Split by Product": { "main": [[{ "node": "Generate Keywords", "type": "main", "index": 0 }]] },
+    "Generate Keywords": { "main": [[{ "node": "Fetch from SerpAPI", "type": "main", "index": 0 }]] },
+    "Fetch from SerpAPI": { "main": [[{ "node": "Extract Trend Score", "type": "main", "index": 0 }]] },
+    "Extract Trend Score": { "main": [[{ "node": "Upsert Keyword", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

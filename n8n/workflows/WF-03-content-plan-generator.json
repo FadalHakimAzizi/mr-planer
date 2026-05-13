@@ -1,0 +1,195 @@
+{
+  "name": "WF-03 Content Plan Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "generate-content-plan",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=⏳ Membuat content plan *{{ $json.durationDays }} hari*... Ini mungkin membutuhkan 1-2 menit.",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "send-loading",
+      "name": "Send Loading",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [460, 200],
+      "credentials": { "telegramApi": { "id": "1", "name": "Telegram Bot" } }
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "products",
+        "filters": {
+          "conditions": [{ "keyName": "user_id", "condition": "equal", "keyValue": "={{ $json.dbUserId }}" }]
+        },
+        "options": { "limit": 1, "sort": { "column": "created_at", "direction": "DESC" } }
+      },
+      "id": "get-latest-product",
+      "name": "Get Latest Product",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 400],
+      "credentials": { "postgres": { "id": "2", "name": "Supabase DB" } }
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "keywords",
+        "filters": {
+          "conditions": [{ "keyName": "product_id", "condition": "equal", "keyValue": "={{ $json.id }}" }]
+        },
+        "options": { "limit": 10, "sort": { "column": "trend_score", "direction": "DESC" } }
+      },
+      "id": "get-keywords",
+      "name": "Get Top Keywords",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 400],
+      "credentials": { "postgres": { "id": "2", "name": "Supabase DB" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const product = $('Get Latest Product').item.json;\nconst keywordRows = $('Get Top Keywords').all();\nconst keywords = keywordRows.map(r => r.json.keyword).filter(Boolean);\nconst durationDays = $('Webhook Trigger').item.json.durationDays;\nconst startDate = new Date().toISOString().split('T')[0];\n\nconst prompt = `Kamu adalah content strategist TikTok untuk affiliator Indonesia.\\nBuat content plan ${durationDays} hari untuk produk berikut:\\n\\nProduk: ${product.name}\\nSelling Points: ${(product.selling_points || []).join(', ')}\\nTarget Market: ${product.target_market}\\nTrending Keywords: ${keywords.join(', ')}\\nTanggal Mulai: ${startDate}\\n\\nBuat ${durationDays} konten, satu per hari. Variasikan jenis konten (Entertain, Softselling, Edukasi, Hardselling, Trend, Problem-Solution).\\n\\nOutput HANYA JSON array (tanpa markdown, tanpa penjelasan):\\n[{\\n  \"row_number\": 1,\\n  \"post_date\": \"YYYY-MM-DD\",\\n  \"title\": \"judul konten\",\\n  \"content_type\": \"Entertain|Softselling|Edukasi|Hardselling|Trend|Problem-Solution\",\\n  \"post_type\": \"Video TikTok|Video + Story|Story|Live\",\\n  \"hook\": \"kalimat hook pembuka\",\\n  \"caption\": \"caption TikTok (max 200 karakter)\",\\n  \"hashtags\": [\"#tag1\", \"#tag2\", \"#tag3\", \"#tag4\", \"#tag5\"]\\n}]`;\n\nreturn [{ json: { prompt, product, durationDays, startDate } }];"
+      },
+      "id": "build-prompt",
+      "name": "Build AI Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [{
+            "name": "=",
+            "value": "={{ JSON.stringify({ model: 'meta-llama/llama-3.3-70b-instruct', messages: [{ role: 'user', content: $json.prompt }], temperature: 0.8, max_tokens: 8192 }) }}"
+          }]
+        },
+        "options": {}
+      },
+      "id": "call-openrouter",
+      "name": "Generate Plan with AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 400],
+      "credentials": { "httpHeaderAuth": { "id": "4", "name": "OpenRouter API" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.choices[0].message.content;\nlet items;\ntry {\n  items = JSON.parse(raw.replace(/```json\\n?|\\n?```/g, '').trim());\n} catch(e) {\n  items = [];\n}\nconst product = $('Build AI Prompt').item.json.product;\nconst durationDays = $('Build AI Prompt').item.json.durationDays;\nconst dbUserId = $('Webhook Trigger').item.json.dbUserId;\nreturn [{ json: { items, product, durationDays, dbUserId } }];"
+      },
+      "id": "parse-plan",
+      "name": "Parse Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "content_plans",
+        "columns": "user_id, product_id, duration_days, status",
+        "options": { "returnFields": "id" }
+      },
+      "id": "create-plan-record",
+      "name": "Create Plan Record",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1560, 400],
+      "credentials": { "postgres": { "id": "2", "name": "Supabase DB" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const planId = $json.id;\nconst items = $('Parse Plan').item.json.items;\nconst productName = $('Parse Plan').item.json.product.name;\nreturn items.map(item => ({\n  json: {\n    plan_id: planId,\n    row_number: item.row_number,\n    post_date: item.post_date,\n    product_name: productName,\n    title: item.title,\n    content_type: item.content_type,\n    post_type: item.post_type,\n    hook: item.hook,\n    caption: item.caption,\n    hashtags: item.hashtags,\n    status: 'pending'\n  }\n}));"
+      },
+      "id": "prepare-items",
+      "name": "Prepare Content Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 400]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "content_items",
+        "columns": "plan_id, row_number, post_date, product_name, title, content_type, post_type, hook, caption, hashtags, status",
+        "options": {}
+      },
+      "id": "insert-items",
+      "name": "Insert Content Items",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2000, 400],
+      "credentials": { "postgres": { "id": "2", "name": "Supabase DB" } }
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.NEXT_PUBLIC_URL }}/api/generate-spreadsheet",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [{
+            "name": "=",
+            "value": "={{ JSON.stringify({ planId: $('Create Plan Record').item.json.id, items: $('Parse Plan').item.json.items, productName: $('Parse Plan').item.json.product.name, durationDays: $('Parse Plan').item.json.durationDays }) }}"
+          }]
+        },
+        "options": {}
+      },
+      "id": "create-spreadsheet",
+      "name": "Create Google Spreadsheet",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2220, 400]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Webhook Trigger').item.json.chatId }}",
+        "text": "=✅ *Content Plan Selesai!*\n\n📅 *{{ $('Parse Plan').item.json.durationDays }} Konten* siap untuk produk *{{ $('Parse Plan').item.json.product.name }}*\n\n📊 Buka Spreadsheet-mu:\n{{ $json.spreadsheetUrl }}\n\n💡 Untuk generate script konten tertentu, ketik:\n`/script [nomor]` (contoh: `/script 3`)",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "send-result",
+      "name": "Send Result",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2440, 400],
+      "credentials": { "telegramApi": { "id": "1", "name": "Telegram Bot" } }
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[
+        { "node": "Send Loading", "type": "main", "index": 0 },
+        { "node": "Get Latest Product", "type": "main", "index": 0 }
+      ]]
+    },
+    "Get Latest Product": { "main": [[{ "node": "Get Top Keywords", "type": "main", "index": 0 }]] },
+    "Get Top Keywords": { "main": [[{ "node": "Build AI Prompt", "type": "main", "index": 0 }]] },
+    "Build AI Prompt": { "main": [[{ "node": "Generate Plan with AI", "type": "main", "index": 0 }]] },
+    "Generate Plan with AI": { "main": [[{ "node": "Parse Plan", "type": "main", "index": 0 }]] },
+    "Parse Plan": { "main": [[{ "node": "Create Plan Record", "type": "main", "index": 0 }]] },
+    "Create Plan Record": { "main": [[{ "node": "Prepare Content Items", "type": "main", "index": 0 }]] },
+    "Prepare Content Items": { "main": [[{ "node": "Insert Content Items", "type": "main", "index": 0 }]] },
+    "Insert Content Items": { "main": [[{ "node": "Create Google Spreadsheet", "type": "main", "index": 0 }]] },
+    "Create Google Spreadsheet": { "main": [[{ "node": "Send Result", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

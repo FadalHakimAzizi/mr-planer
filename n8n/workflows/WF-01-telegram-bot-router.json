@@ -1,0 +1,134 @@
+{
+  "name": "WF-01 Telegram Bot Router",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message"],
+        "additionalFields": {}
+      },
+      "id": "telegram-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "credentials": { "telegramApi": { "id": "1", "name": "Telegram Bot" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const msg = $json.message;\nconst text = msg?.text || '';\nconst chatId = msg?.chat?.id;\nconst userId = msg?.from?.id;\nconst username = msg?.from?.username || msg?.from?.first_name || 'User';\nconst photo = msg?.photo;\n\nconst command = text.startsWith('/') ? text.split(' ')[0].split('@')[0] : null;\nconst args = text.startsWith('/') ? text.split(' ').slice(1).join(' ') : text;\n\nreturn [{\n  json: {\n    chatId, userId, username, text, command, args, photo,\n    hasPhoto: !!photo,\n    raw: $json\n  }\n}];"
+      },
+      "id": "parse-message",
+      "name": "Parse Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "users",
+        "filters": {
+          "conditions": [{ "keyName": "telegram_id", "condition": "equal", "keyValue": "={{ $json.userId }}" }]
+        },
+        "options": { "limit": 1 }
+      },
+      "id": "find-user",
+      "name": "Find User in DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 300],
+      "credentials": { "postgres": { "id": "2", "name": "Supabase DB" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [{ "value1": "={{ $json.id ? 1 : 0 }}", "operation": "equal", "value2": 0 }]
+        }
+      },
+      "id": "user-exists",
+      "name": "User Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "users",
+        "columns": "telegram_id, full_name",
+        "options": {}
+      },
+      "id": "create-user",
+      "name": "Create New User",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1100, 200],
+      "credentials": { "postgres": { "id": "2", "name": "Supabase DB" } }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "rules": [
+            { "conditions": { "string": [{ "value1": "={{ $('Parse Message').item.json.command }}", "operation": "equal", "value2": "/start" }] }, "renameOutput": true, "outputKey": "start" },
+            { "conditions": { "string": [{ "value1": "={{ $('Parse Message').item.json.command }}", "operation": "equal", "value2": "/analyze" }] }, "renameOutput": true, "outputKey": "analyze" },
+            { "conditions": { "string": [{ "value1": "={{ $('Parse Message').item.json.command }}", "operation": "equal", "value2": "/create" }] }, "renameOutput": true, "outputKey": "create" },
+            { "conditions": { "string": [{ "value1": "={{ $('Parse Message').item.json.command }}", "operation": "equal", "value2": "/script" }] }, "renameOutput": true, "outputKey": "script" },
+            { "conditions": { "string": [{ "value1": "={{ $('Parse Message').item.json.command }}", "operation": "equal", "value2": "/history" }] }, "renameOutput": true, "outputKey": "history" }
+          ]
+        },
+        "fallbackOutput": "extra"
+      },
+      "id": "router",
+      "name": "Command Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1300, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Parse Message').item.json.chatId }}",
+        "text": "Halo *{{ $('Parse Message').item.json.username }}*! 👋\n\nSelamat datang di *MR. PLANER* — AI Content Planner untuk TikTok Affiliator!\n\n✨ *Cara Pakai:*\n📸 /analyze — Analisis produk (kirim foto + command)\n📅 /create — Buat content plan 7 atau 30 hari\n📝 /script [nomor] — Generate script untuk konten tertentu\n📊 /history — Lihat riwayat content plan\n❓ /help — Bantuan\n\nMulai dengan kirim foto produk + /analyze!",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "send-start",
+      "name": "Send Start Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1520, 100],
+      "credentials": { "telegramApi": { "id": "1", "name": "Telegram Bot" } }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Parse Message').item.json.chatId }}",
+        "text": "❓ *Tidak mengerti perintah itu.*\n\nGunakan:\n• /analyze — Analisis produk\n• /create — Buat content plan\n• /script [nomor] — Generate script\n• /history — Riwayat\n• /help — Bantuan",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "send-unknown",
+      "name": "Send Unknown Command",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1520, 500],
+      "credentials": { "telegramApi": { "id": "1", "name": "Telegram Bot" } }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": { "main": [[{ "node": "Parse Message", "type": "main", "index": 0 }]] },
+    "Parse Message": { "main": [[{ "node": "Find User in DB", "type": "main", "index": 0 }]] },
+    "Find User in DB": { "main": [[{ "node": "User Exists?", "type": "main", "index": 0 }]] },
+    "User Exists?": {
+      "main": [
+        [{ "node": "Create New User", "type": "main", "index": 0 }],
+        [{ "node": "Command Router", "type": "main", "index": 0 }]
+      ]
+    },
+    "Create New User": { "main": [[{ "node": "Command Router", "type": "main", "index": 0 }]] },
+    "Command Router": {
+      "start": [{ "node": "Send Start Message", "type": "main", "index": 0 }],
+      "extra": [{ "node": "Send Unknown Command", "type": "main", "index": 0 }]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "meta": { "templateId": "mr-planer-wf-01" }
+}

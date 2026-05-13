@@ -1,0 +1,150 @@
+{
+  "name": "WF-02 Product Analyzer",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "analyze-product",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "⏳ Menganalisis produk... mohon tunggu sebentar!",
+        "additionalFields": {}
+      },
+      "id": "send-loading",
+      "name": "Send Loading Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [460, 200],
+      "credentials": { "telegramApi": { "id": "1", "name": "Telegram Bot" } }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/getFile",
+        "sendQuery": true,
+        "queryParameters": { "parameters": [{ "name": "file_id", "value": "={{ $json.photoFileId }}" }] },
+        "options": {}
+      },
+      "id": "get-file-path",
+      "name": "Get Telegram File Path",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/file/bot{{ $env.TELEGRAM_BOT_TOKEN }}/{{ $json.result.file_path }}",
+        "options": { "response": { "response": { "responseFormat": "file" } } }
+      },
+      "id": "download-photo",
+      "name": "Download Photo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "product-images",
+        "fileName": "={{ $('Webhook Trigger').item.json.userId }}/{{ $now.toMillis() }}.jpg",
+        "fileContent": "={{ $binary.data }}"
+      },
+      "id": "upload-to-supabase",
+      "name": "Upload to Supabase Storage",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [900, 400],
+      "credentials": { "supabaseApi": { "id": "3", "name": "Supabase" } }
+    },
+    {
+      "parameters": {
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "HTTP-Referer", "value": "https://mr-planer.vercel.app" },
+            { "name": "X-Title", "value": "MR. PLANER" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [{
+            "name": "=",
+            "value": "={{ JSON.stringify({ model: 'google/gemini-2.0-flash', messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: $('Upload to Supabase Storage').item.json.publicUrl } }, { type: 'text', text: 'Kamu adalah AI product analyst untuk affiliator TikTok Indonesia. Analisis gambar produk ini dan berikan output JSON: { \"name\": \"nama produk\", \"selling_points\": [\"...\"], \"target_market\": \"...\", \"use_cases\": [\"...\"] }. Gunakan bahasa Indonesia.' }] }], temperature: 0.7, max_tokens: 1024 }) }}"
+          }]
+        },
+        "options": {}
+      },
+      "id": "call-openrouter",
+      "name": "Analyze with OpenRouter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 400],
+      "credentials": { "httpHeaderAuth": { "id": "4", "name": "OpenRouter API" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.choices[0].message.content;\nlet parsed;\ntry {\n  parsed = JSON.parse(raw.replace(/```json\\n?|\\n?```/g, '').trim());\n} catch(e) {\n  parsed = { name: 'Produk', selling_points: [], target_market: '', use_cases: [] };\n}\nreturn [{ json: { ...parsed, imageUrl: $('Upload to Supabase Storage').item.json.publicUrl } }];"
+      },
+      "id": "parse-ai-response",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "products",
+        "columns": "user_id, name, description, image_url, selling_points, target_market",
+        "options": { "returnFields": "id, name" }
+      },
+      "id": "save-product",
+      "name": "Save Product to DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1560, 400],
+      "credentials": { "postgres": { "id": "2", "name": "Supabase DB" } }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Webhook Trigger').item.json.chatId }}",
+        "text": "=✅ *Analisis Produk Selesai!*\n\n📦 *Nama Produk:* {{ $('Parse AI Response').item.json.name }}\n\n💡 *Selling Points:*\n{{ $('Parse AI Response').item.json.selling_points.map((s, i) => `${i+1}. ${s}`).join('\\n') }}\n\n🎯 *Target Market:* {{ $('Parse AI Response').item.json.target_market }}\n\n📌 Produk telah disimpan! Ketik /create untuk membuat content plan.",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "send-result",
+      "name": "Send Analysis Result",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1780, 400],
+      "credentials": { "telegramApi": { "id": "1", "name": "Telegram Bot" } }
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[
+        { "node": "Send Loading Message", "type": "main", "index": 0 },
+        { "node": "Get Telegram File Path", "type": "main", "index": 0 }
+      ]]
+    },
+    "Get Telegram File Path": { "main": [[{ "node": "Download Photo", "type": "main", "index": 0 }]] },
+    "Download Photo": { "main": [[{ "node": "Upload to Supabase Storage", "type": "main", "index": 0 }]] },
+    "Upload to Supabase Storage": { "main": [[{ "node": "Analyze with OpenRouter", "type": "main", "index": 0 }]] },
+    "Analyze with OpenRouter": { "main": [[{ "node": "Parse AI Response", "type": "main", "index": 0 }]] },
+    "Parse AI Response": { "main": [[{ "node": "Save Product to DB", "type": "main", "index": 0 }]] },
+    "Save Product to DB": { "main": [[{ "node": "Send Analysis Result", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}
