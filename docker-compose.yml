@@ -1,0 +1,38 @@
+services:
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+    image: mr-planer-web:latest
+    container_name: mr-planer-web
+    restart: always
+    expose:
+      - "3000"
+    networks:
+      - n8n_default
+    env_file:
+      - .env
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=n8n_default
+      - traefik.http.routers.mrplaner.rule=Host(`${APP_SUBDOMAIN}.${APP_DOMAIN}`)
+      - traefik.http.routers.mrplaner.tls=true
+      - traefik.http.routers.mrplaner.entrypoints=web,websecure
+      - traefik.http.routers.mrplaner.tls.certresolver=mytlschallenge
+      - traefik.http.services.mrplaner.loadbalancer.server.port=3000
+      - traefik.http.middlewares.mrplaner.headers.SSLRedirect=true
+      - traefik.http.middlewares.mrplaner.headers.STSSeconds=315360000
+      - traefik.http.middlewares.mrplaner.headers.browserXSSFilter=true
+      - traefik.http.middlewares.mrplaner.headers.contentTypeNosniff=true
+      - traefik.http.middlewares.mrplaner.headers.forceSTSHeader=true
+      - traefik.http.middlewares.mrplaner.headers.SSLHost=${APP_DOMAIN}
+      - traefik.http.middlewares.mrplaner.headers.STSIncludeSubdomains=true
+      - traefik.http.middlewares.mrplaner.headers.STSPreload=true
+      - traefik.http.routers.mrplaner.middlewares=mrplaner@docker
+
+networks:
+  n8n_default:
+    external: true
