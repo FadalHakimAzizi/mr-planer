@@ -28,7 +28,7 @@ export default function Sidebar({ role }: { role?: string }) {
   return (
     <aside className="flex flex-col w-56 min-h-screen border-r py-6 px-3 shrink-0"
       style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(255,255,255,0.06)' }}>
-      <Link href="/" className="font-black text-base gradient-text px-3 mb-8 block">✦ MR. PLANER</Link>
+      <Link href="/" className="font-black text-base gradient-text px-3 mb-8 block">✦ MR. PLANNER</Link>
 
       <nav className="flex flex-col gap-1 flex-1">
         {navItems.map(({ href, icon: Icon, label }) => {

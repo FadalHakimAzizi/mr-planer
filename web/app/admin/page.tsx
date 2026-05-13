@@ -36,7 +36,7 @@ export default async function AdminPage() {
         <ShieldCheck size={28} style={{ color: '#f59e0b' }} />
         <div>
           <h1 className="text-2xl font-black text-white">Admin Panel</h1>
-          <p className="text-gray-400 text-sm">Overview sistem MR. PLANER</p>
+          <p className="text-gray-400 text-sm">Overview sistem MR. PLANNER</p>
         </div>
       </div>
 

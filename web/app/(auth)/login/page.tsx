@@ -2,37 +2,65 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
+function translateAuthError(message: string): { text: string; needsVerify: boolean } {
+  const m = message.toLowerCase()
+  if (m.includes('email not confirmed') || m.includes('not confirmed')) {
+    return { text: 'Email kamu belum terverifikasi. Cek inbox/spam untuk link verifikasi.', needsVerify: true }
+  }
+  if (m.includes('invalid login credentials') || m.includes('invalid_credentials')) {
+    return { text: 'Email atau password salah.', needsVerify: false }
+  }
+  if (m.includes('rate limit')) {
+    return { text: 'Terlalu banyak percobaan login. Coba lagi beberapa menit.', needsVerify: false }
+  }
+  return { text: message, needsVerify: false }
+}
+
 export default function LoginPage() {
-  const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [needsVerify, setNeedsVerify] = useState(false)
+  const [resending, setResending] = useState(false)
+  const [resendSuccess, setResendSuccess] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
     setError('')
+    setNeedsVerify(false)
+    setResendSuccess(false)
     const supabase = createClient()
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) {
-      setError(error.message)
+      const t = translateAuthError(error.message)
+      setError(t.text)
+      setNeedsVerify(t.needsVerify)
       setLoading(false)
-    } else {
-      router.push('/dashboard')
+      return
     }
+    window.location.href = '/dashboard'
+  }
+
+  async function handleResend() {
+    setResending(true)
+    setResendSuccess(false)
+    const supabase = createClient()
+    const { error } = await supabase.auth.resend({ type: 'signup', email })
+    setResending(false)
+    if (!error) setResendSuccess(true)
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4" style={{ background: '#0f0f1a' }}>
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <Link href="/" className="font-black text-2xl gradient-text">✦ MR. PLANER</Link>
+          <Link href="/" className="font-black text-2xl gradient-text">✦ MR. PLANNER</Link>
           <p className="text-gray-400 mt-2 text-sm">Masuk ke akun kamu</p>
         </div>
 
@@ -64,8 +92,19 @@ export default function LoginPage() {
             </div>
 
             {error && (
-              <div className="text-sm text-red-400 px-3 py-2 rounded-lg" style={{ background: 'rgba(251,113,133,0.1)', border: '1px solid rgba(251,113,133,0.2)' }}>
-                {error}
+              <div className="text-sm text-red-300 px-3 py-3 rounded-lg space-y-2" style={{ background: 'rgba(251,113,133,0.1)', border: '1px solid rgba(251,113,133,0.2)' }}>
+                <div>{error}</div>
+                {needsVerify && (
+                  <button
+                    type="button"
+                    onClick={handleResend}
+                    disabled={resending || resendSuccess}
+                    className="text-xs font-semibold underline disabled:opacity-50"
+                    style={{ color: '#fda4af' }}
+                  >
+                    {resending ? 'Mengirim ulang...' : resendSuccess ? '✓ Email verifikasi sudah dikirim ulang' : 'Kirim ulang email verifikasi'}
+                  </button>
+                )}
               </div>
             )}
 

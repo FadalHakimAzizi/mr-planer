@@ -5,12 +5,12 @@ import './globals.css'
 const inter = Inter({ subsets: ['latin'], variable: '--font-sans' })
 
 export const metadata: Metadata = {
-  title: 'MR. PLANER — AI Content Planner untuk TikTok Affiliator',
+  title: 'MR. PLANNER — AI Content Planner untuk TikTok Affiliator',
   description:
     'Upload foto produk → AI analisis → Content plan 30 hari + script siap produksi. Otomatis, cepat, dan terstruktur.',
   keywords: ['tiktok affiliator', 'content plan', 'AI content planner', 'script tiktok', 'affiliasi'],
   openGraph: {
-    title: 'MR. PLANER',
+    title: 'MR. PLANNER',
     description: 'AI Content Planner untuk TikTok Affiliator Indonesia',
     type: 'website',
   },

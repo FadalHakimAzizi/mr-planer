@@ -28,7 +28,7 @@ export default function LandingPage() {
       {/* Navbar */}
       <nav className="fixed top-0 left-0 right-0 z-50 border-b" style={{ background: 'rgba(15,15,26,0.8)', borderColor: 'rgba(255,255,255,0.06)', backdropFilter: 'blur(12px)' }}>
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <span className="font-black text-lg tracking-tight gradient-text">✦ MR. PLANER</span>
+          <span className="font-black text-lg tracking-tight gradient-text">✦ MR. PLANNER</span>
           <div className="hidden md:flex items-center gap-8 text-sm text-gray-400">
             <a href="#features" className="hover:text-white transition-colors">Fitur</a>
             <a href="#how-it-works" className="hover:text-white transition-colors">Cara Kerja</a>
@@ -200,8 +200,8 @@ export default function LandingPage() {
       {/* Footer */}
       <footer className="border-t px-6 py-8" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
         <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-          <span className="font-black gradient-text">✦ MR. PLANER</span>
-          <p className="text-xs text-gray-500">© 2026 MR. PLANER. AI Content Planning untuk Affiliator TikTok.</p>
+          <span className="font-black gradient-text">✦ MR. PLANNER</span>
+          <p className="text-xs text-gray-500">© 2026 MR. PLANNER. AI Content Planning untuk Affiliator TikTok.</p>
           <div className="flex gap-6 text-xs text-gray-500">
             <a href="#" className="hover:text-white transition-colors">Privasi</a>
             <a href="#" className="hover:text-white transition-colors">Syarat</a>
