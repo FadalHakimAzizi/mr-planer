@@ -5,6 +5,7 @@ import { fetchAndSaveTrendKeywords } from '@/lib/serpapi'
 import { fetchAndSavePainPoints } from '@/lib/ecommerce-insights'
 import { fetchAndSaveCompetitorAngles } from '@/lib/competitor'
 import { getOptimalPostTime } from '@/lib/posting-schedule'
+import { createContentPlanSpreadsheet } from '@/lib/google-api'
 
 
 export const maxDuration = 60
@@ -124,41 +125,26 @@ export async function POST(request: NextRequest) {
       startDate,
     })
 
-    // Generate CSV and upload to Supabase Storage
+    // Create Google Spreadsheet
     let spreadsheetUrl = ''
     try {
-      const headers = ['No','Tanggal Posting','Nama Produk','Judul Konten','Jenis Konten','Post Type','Hook','Caption','Hashtag','Status']
-      const csvRows = [
-        headers.join(','),
-        ...planItems.map(item => [
-          item.row_number,
-          item.post_date,
-          analysis.name,
-          `"${(item.title ?? '').replace(/"/g, '""')}"`,
-          item.content_type,
-          item.post_type,
-          `"${(item.hook ?? '').replace(/"/g, '""')}"`,
-          `"${(item.caption ?? '').replace(/"/g, '""')}"`,
-          `"${(item.hashtags ?? []).join(' ')}"`,
-          'Menunggu',
-        ].join(',')),
-      ]
-      const csvContent = csvRows.join('\n')
-      const csvBytes = Buffer.from('﻿' + csvContent, 'utf-8') // BOM for Excel/Sheets
-      const csvFileName = `${user.id}/${Date.now()}-content-plan.csv`
-
-      const { data: csvUpload, error: csvErr } = await service.storage
-        .from('product-images')
-        .upload(csvFileName, csvBytes, { contentType: 'text/csv', upsert: false })
-
-      if (!csvErr && csvUpload) {
-        const { data: { publicUrl } } = service.storage
-          .from('product-images')
-          .getPublicUrl(csvUpload.path)
-        spreadsheetUrl = publicUrl
-      }
-    } catch (csvErr) {
-      console.error('CSV generation error:', csvErr)
+      spreadsheetUrl = await createContentPlanSpreadsheet({
+        title: `MR. PLANNER - ${analysis.name} - ${duration} hari - ${new Date().toISOString().slice(0, 10)}`,
+        items: planItems.map(item => ({
+          row_number: item.row_number,
+          post_date: item.post_date,
+          post_time: item.post_time ?? getOptimalPostTime(item.content_type, item.post_date),
+          product_name: analysis.name,
+          title: item.title,
+          content_type: item.content_type,
+          post_type: item.post_type,
+          hook: item.hook,
+          caption: item.caption,
+          hashtags: item.hashtags ?? [],
+        })),
+      })
+    } catch (sheetErr) {
+      console.error('Google Sheets create error:', sheetErr)
     }
 
     // Save plan to DB
