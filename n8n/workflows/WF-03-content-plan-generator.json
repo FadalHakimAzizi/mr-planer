@@ -1,195 +1,1189 @@
-{
-  "name": "WF-03 Content Plan Generator",
-  "nodes": [
-    {
-      "parameters": {
-        "httpMethod": "POST",
-        "path": "generate-content-plan",
-        "responseMode": "responseNode",
-        "options": {}
-      },
-      "id": "webhook-trigger",
-      "name": "Webhook Trigger",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [240, 300]
-    },
-    {
-      "parameters": {
-        "chatId": "={{ $json.chatId }}",
-        "text": "=⏳ Membuat content plan *{{ $json.durationDays }} hari*... Ini mungkin membutuhkan 1-2 menit.",
-        "additionalFields": { "parse_mode": "Markdown" }
-      },
-      "id": "send-loading",
-      "name": "Send Loading",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [460, 200],
-      "credentials": { "telegramApi": { "id": "1", "name": "Telegram Bot" } }
-    },
-    {
-      "parameters": {
-        "operation": "select",
-        "schema": "public",
-        "table": "products",
-        "filters": {
-          "conditions": [{ "keyName": "user_id", "condition": "equal", "keyValue": "={{ $json.dbUserId }}" }]
-        },
-        "options": { "limit": 1, "sort": { "column": "created_at", "direction": "DESC" } }
-      },
-      "id": "get-latest-product",
-      "name": "Get Latest Product",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [460, 400],
-      "credentials": { "postgres": { "id": "2", "name": "Supabase DB" } }
-    },
-    {
-      "parameters": {
-        "operation": "select",
-        "schema": "public",
-        "table": "keywords",
-        "filters": {
-          "conditions": [{ "keyName": "product_id", "condition": "equal", "keyValue": "={{ $json.id }}" }]
-        },
-        "options": { "limit": 10, "sort": { "column": "trend_score", "direction": "DESC" } }
-      },
-      "id": "get-keywords",
-      "name": "Get Top Keywords",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [680, 400],
-      "credentials": { "postgres": { "id": "2", "name": "Supabase DB" } }
-    },
-    {
-      "parameters": {
-        "jsCode": "const product = $('Get Latest Product').item.json;\nconst keywordRows = $('Get Top Keywords').all();\nconst keywords = keywordRows.map(r => r.json.keyword).filter(Boolean);\nconst durationDays = $('Webhook Trigger').item.json.durationDays;\nconst startDate = new Date().toISOString().split('T')[0];\n\nconst prompt = `Kamu adalah content strategist TikTok untuk affiliator Indonesia.\\nBuat content plan ${durationDays} hari untuk produk berikut:\\n\\nProduk: ${product.name}\\nSelling Points: ${(product.selling_points || []).join(', ')}\\nTarget Market: ${product.target_market}\\nTrending Keywords: ${keywords.join(', ')}\\nTanggal Mulai: ${startDate}\\n\\nBuat ${durationDays} konten, satu per hari. Variasikan jenis konten (Entertain, Softselling, Edukasi, Hardselling, Trend, Problem-Solution).\\n\\nOutput HANYA JSON array (tanpa markdown, tanpa penjelasan):\\n[{\\n  \"row_number\": 1,\\n  \"post_date\": \"YYYY-MM-DD\",\\n  \"title\": \"judul konten\",\\n  \"content_type\": \"Entertain|Softselling|Edukasi|Hardselling|Trend|Problem-Solution\",\\n  \"post_type\": \"Video TikTok|Video + Story|Story|Live\",\\n  \"hook\": \"kalimat hook pembuka\",\\n  \"caption\": \"caption TikTok (max 200 karakter)\",\\n  \"hashtags\": [\"#tag1\", \"#tag2\", \"#tag3\", \"#tag4\", \"#tag5\"]\\n}]`;\n\nreturn [{ json: { prompt, product, durationDays, startDate } }];"
-      },
-      "id": "build-prompt",
-      "name": "Build AI Prompt",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [900, 400]
-    },
-    {
-      "parameters": {
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [{
-            "name": "=",
-            "value": "={{ JSON.stringify({ model: 'meta-llama/llama-3.3-70b-instruct', messages: [{ role: 'user', content: $json.prompt }], temperature: 0.8, max_tokens: 8192 }) }}"
-          }]
-        },
-        "options": {}
-      },
-      "id": "call-openrouter",
-      "name": "Generate Plan with AI",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [1120, 400],
-      "credentials": { "httpHeaderAuth": { "id": "4", "name": "OpenRouter API" } }
-    },
-    {
-      "parameters": {
-        "jsCode": "const raw = $json.choices[0].message.content;\nlet items;\ntry {\n  items = JSON.parse(raw.replace(/```json\\n?|\\n?```/g, '').trim());\n} catch(e) {\n  items = [];\n}\nconst product = $('Build AI Prompt').item.json.product;\nconst durationDays = $('Build AI Prompt').item.json.durationDays;\nconst dbUserId = $('Webhook Trigger').item.json.dbUserId;\nreturn [{ json: { items, product, durationDays, dbUserId } }];"
-      },
-      "id": "parse-plan",
-      "name": "Parse Plan",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1340, 400]
-    },
-    {
-      "parameters": {
-        "operation": "insert",
-        "schema": "public",
-        "table": "content_plans",
-        "columns": "user_id, product_id, duration_days, status",
-        "options": { "returnFields": "id" }
-      },
-      "id": "create-plan-record",
-      "name": "Create Plan Record",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [1560, 400],
-      "credentials": { "postgres": { "id": "2", "name": "Supabase DB" } }
-    },
-    {
-      "parameters": {
-        "jsCode": "const planId = $json.id;\nconst items = $('Parse Plan').item.json.items;\nconst productName = $('Parse Plan').item.json.product.name;\nreturn items.map(item => ({\n  json: {\n    plan_id: planId,\n    row_number: item.row_number,\n    post_date: item.post_date,\n    product_name: productName,\n    title: item.title,\n    content_type: item.content_type,\n    post_type: item.post_type,\n    hook: item.hook,\n    caption: item.caption,\n    hashtags: item.hashtags,\n    status: 'pending'\n  }\n}));"
-      },
-      "id": "prepare-items",
-      "name": "Prepare Content Items",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1780, 400]
-    },
-    {
-      "parameters": {
-        "operation": "insert",
-        "schema": "public",
-        "table": "content_items",
-        "columns": "plan_id, row_number, post_date, product_name, title, content_type, post_type, hook, caption, hashtags, status",
-        "options": {}
-      },
-      "id": "insert-items",
-      "name": "Insert Content Items",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [2000, 400],
-      "credentials": { "postgres": { "id": "2", "name": "Supabase DB" } }
-    },
-    {
-      "parameters": {
-        "url": "={{ $env.NEXT_PUBLIC_URL }}/api/generate-spreadsheet",
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [{
-            "name": "=",
-            "value": "={{ JSON.stringify({ planId: $('Create Plan Record').item.json.id, items: $('Parse Plan').item.json.items, productName: $('Parse Plan').item.json.product.name, durationDays: $('Parse Plan').item.json.durationDays }) }}"
-          }]
-        },
-        "options": {}
-      },
-      "id": "create-spreadsheet",
-      "name": "Create Google Spreadsheet",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [2220, 400]
-    },
-    {
-      "parameters": {
-        "chatId": "={{ $('Webhook Trigger').item.json.chatId }}",
-        "text": "=✅ *Content Plan Selesai!*\n\n📅 *{{ $('Parse Plan').item.json.durationDays }} Konten* siap untuk produk *{{ $('Parse Plan').item.json.product.name }}*\n\n📊 Buka Spreadsheet-mu:\n{{ $json.spreadsheetUrl }}\n\n💡 Untuk generate script konten tertentu, ketik:\n`/script [nomor]` (contoh: `/script 3`)",
-        "additionalFields": { "parse_mode": "Markdown" }
-      },
-      "id": "send-result",
-      "name": "Send Result",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [2440, 400],
-      "credentials": { "telegramApi": { "id": "1", "name": "Telegram Bot" } }
-    }
-  ],
-  "connections": {
-    "Webhook Trigger": {
-      "main": [[
-        { "node": "Send Loading", "type": "main", "index": 0 },
-        { "node": "Get Latest Product", "type": "main", "index": 0 }
-      ]]
-    },
-    "Get Latest Product": { "main": [[{ "node": "Get Top Keywords", "type": "main", "index": 0 }]] },
-    "Get Top Keywords": { "main": [[{ "node": "Build AI Prompt", "type": "main", "index": 0 }]] },
-    "Build AI Prompt": { "main": [[{ "node": "Generate Plan with AI", "type": "main", "index": 0 }]] },
-    "Generate Plan with AI": { "main": [[{ "node": "Parse Plan", "type": "main", "index": 0 }]] },
-    "Parse Plan": { "main": [[{ "node": "Create Plan Record", "type": "main", "index": 0 }]] },
-    "Create Plan Record": { "main": [[{ "node": "Prepare Content Items", "type": "main", "index": 0 }]] },
-    "Prepare Content Items": { "main": [[{ "node": "Insert Content Items", "type": "main", "index": 0 }]] },
-    "Insert Content Items": { "main": [[{ "node": "Create Google Spreadsheet", "type": "main", "index": 0 }]] },
-    "Create Google Spreadsheet": { "main": [[{ "node": "Send Result", "type": "main", "index": 0 }]] }
-  },
-  "settings": { "executionOrder": "v1" }
+﻿{
+    "name":  "WF-03 Content Plan Generator",
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "generate-content-plan",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "f039c777-1481-4a55-8426-839a6eb0b036",
+                      "name":  "Webhook Trigger",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       6272,
+                                       688
+                                   ],
+                      "webhookId":  "49a2b6ea-9c30-414b-bfdd-d53b5d45a6c8"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const data = $json.body || $json;\nreturn [{ json: data }];"
+                                     },
+                      "id":  "a94dfce5-c82d-4a63-9b8a-37a257b693f2",
+                      "name":  "Normalize Input",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       6720,
+                                       688
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "chatId":  "={{ $json.chatId }}",
+                                         "text":  "=⏳ Membuat content plan *{{ $json.durationDays }} hari*... Ini mungkin membutuhkan 1-2 menit.",
+                                         "additionalFields":  {
+                                                                  "appendAttribution":  false,
+                                                                  "parse_mode":  "Markdown"
+                                                              },
+                                         "resource":  "message",
+                                         "operation":  "sendMessage"
+                                     },
+                      "id":  "99a10da0-a63f-4d7e-aa28-839c5ef7c56d",
+                      "name":  "Send Loading",
+                      "type":  "n8n-nodes-base.telegram",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       6944,
+                                       592
+                                   ],
+                      "webhookId":  "c7ca8db3-9c4d-4f63-8b27-3279d99f1176",
+                      "credentials":  {
+                                          "telegramApi":  {
+                                                              "id":  "",
+                                                              "name":  null
+                                                          }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "={{ \u0027SELECT * FROM public.products WHERE user_id = \\\u0027\u0027 + $json.dbUserId + \u0027\\\u0027 ORDER BY created_at DESC LIMIT 1\u0027 }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "ae177794-2292-41a0-a0d9-47770dfe6093",
+                      "name":  "Get Latest Product",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       6944,
+                                       784
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "",
+                                                           "name":  null
+                                                       }
+                                      },
+                      "alwaysOutputData":  true
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const product = $(\u0027Get Latest Product\u0027).item.json;\n\nlet sellingPoints = product.selling_points || [];\nif (typeof sellingPoints === \u0027string\u0027) {\n  try { sellingPoints = JSON.parse(sellingPoints); } catch(e) { sellingPoints = []; }\n}\n\nconst keywords = [\n  product.name,\n  ...(sellingPoints.slice(0, 3)),\n  product.target_market\n].filter(Boolean).map(function(k) {\n  return String(k).split(\u0027 \u0027).slice(0, 3).join(\u0027 \u0027);\n});\n\nreturn keywords.map(function(kw) {\n  return { json: { keyword: kw } };\n});"
+                                     },
+                      "id":  "dc5679ae-f320-4f8d-9495-33f721de70b1",
+                      "name":  "Get Top Keywords",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       7168,
+                                       784
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const product = $(\u0027Get Latest Product\u0027).item.json;\nconst keywordRows = $(\u0027Get Top Keywords\u0027).all();\nconst keywords = keywordRows.map(function(r){ return r.json.keyword; }).filter(Boolean);\n\nconst input = $(\u0027Normalize Input\u0027).item.json;\nconst durationDays = input.durationDays || 7;\nconst dbUserId = input.dbUserId;\nconst chatId = String(input.chatId || \u0027\u0027);\nconst startDate = new Date().toISOString().split(\u0027T\u0027)[0];\n\nlet sellingPoints = product.selling_points || [];\nif (typeof sellingPoints === \u0027string\u0027) { try { sellingPoints = JSON.parse(sellingPoints); } catch(e) { sellingPoints = []; } }\n\nlet painPoints = product.pain_points || [];\nif (typeof painPoints === \u0027string\u0027) { try { painPoints = JSON.parse(painPoints); } catch(e) { painPoints = []; } }\n\nlet competitorAngles = product.competitor_angles || [];\nif (typeof competitorAngles === \u0027string\u0027) { try { competitorAngles = JSON.parse(competitorAngles); } catch(e) { competitorAngles = []; } }\n\nconst HOOK_FORMULAS = {\n  Entertain: [\n    { p:\u0027POV Relatable\u0027, t:\u0027POV: {situasi_relatable_dengan_produk}\u0027, e:\u0027POV: Akhirnya nemu earphone yang nggak bikin kuping sakit seharian\u0027 },\n    { p:\u0027Curiosity Gap\u0027, t:\u0027Gue hampir nggak percaya {fakta_mengejutkan_tentang_produk}...\u0027, e:\u0027Gue hampir nggak percaya earphone 200rb bisa ngalahin yang 1 juta...\u0027 },\n    { p:\u0027Storytime\u0027, t:\u0027Cerita {waktu} lalu yang akhirnya bikin gue switch ke {produk}\u0027, e:\u0027Cerita 3 bulan lalu yang akhirnya bikin gue switch ke speaker portable ini\u0027 },\n    { p:\u0027Reaction\u0027, t:\u0027Ekspresi gue pertama kali nyoba {produk} jujur banget\u0027, e:\u0027Ekspresi gue pertama kali nyoba speaker ini jujur banget\u0027 }\n  ],\n  Softselling: [\n    { p:\u0027Problem-Solution\u0027, t:\u0027Udah capek dengan {pain_point}? Ini yang akhirnya berhasil buat gue\u0027, e:\u0027Udah capek earphone putus terus? Ini yang akhirnya berhasil buat gue\u0027 },\n    { p:\u0027Before-After\u0027, t:\u0027Sebelum pakai {produk}: {kondisi_buruk}. Setelah pakai: {kondisi_baik}\u0027, e:\u0027Sebelum pakai ini: meeting online selalu berisik. Setelah pakai: jernih banget\u0027 },\n    { p:\u0027Social Proof Number\u0027, t:\u0027{angka} pembeli nggak mungkin salah pilih {produk}\u0027, e:\u002737.000 pembeli nggak mungkin salah pilih earphone ini\u0027 },\n    { p:\u0027Honest Review\u0027, t:\u0027Jujur review {produk} setelah {durasi} pemakaian ada yang mengecewakan?\u0027, e:\u0027Jujur review speaker ini setelah 3 bulan pemakaian ada yang mengecewakan?\u0027 }\n  ],\n  Edukasi: [\n    { p:\u0027Misconception\u0027, t:\u0027Selama ini kita salah paham soal {topik_terkait_produk}\u0027, e:\u0027Selama ini kita salah paham soal cara pilih earphone yang benar\u0027 },\n    { p:\u0027Number Tips\u0027, t:\u0027{angka} hal yang {target_audience} wajib tau sebelum beli {kategori_produk}\u0027, e:\u00275 hal yang wajib kamu tau sebelum beli earphone gaming\u0027 },\n    { p:\u0027Warning Hook\u0027, t:\u0027Stop dulu, jangan beli {kategori_produk} sebelum tau ini\u0027, e:\u0027Stop dulu, jangan beli earphone sebelum tau ini\u0027 },\n    { p:\u0027Comparison\u0027, t:\u0027Bedanya {produk_mahal} vs {produk_kita} yang harganya {selisih_harga} lebih murah\u0027, e:\u0027Bedanya AirPods vs earphone ini yang harganya 800rb lebih murah\u0027 }\n  ],\n  Hardselling: [\n    { p:\u0027Urgency Scarcity\u0027, t:\u0027Stok tinggal {angka}! {produk} yang udah {social_proof} ini lagi diskon\u0027, e:\u0027Stok tinggal 50! Speaker yang udah 10rb+ review ini lagi diskon 40%\u0027 },\n    { p:\u0027Price Shock\u0027, t:\u0027Harga {harga} untuk {value_proposition}? Beneran ini bukan PHP\u0027, e:\u0027Harga 150rb untuk kualitas suara sekelas ini? Beneran ini bukan PHP\u0027 },\n    { p:\u0027FOMO\u0027, t:\u0027{angka} orang udah order {produk} hari ini, kamu?\u0027, e:\u0027500 orang udah order earphone ini hari ini, kamu?\u0027 },\n    { p:\u0027Direct Offer\u0027, t:\u0027Link di bio! {produk} + {bonus} cuma {harga} hari ini doang\u0027, e:\u0027Link di bio! Speaker portable + gratis case cuma 199rb hari ini doang\u0027 }\n  ],\n  Trend: [\n    { p:\u0027Trend Ride\u0027, t:\u0027Ikut trend {nama_trend} tapi pakai {produk} hasilnya...\u0027, e:\u0027Ikut trend silent walking tapi pakai earphone ini hasilnya...\u0027 },\n    { p:\u0027Sound Match\u0027, t:\u0027Sound ini {nama_sound} terlalu cocok sama {situasi_pakai_produk}\u0027, e:\u0027Sound ini terlalu cocok sama momen unboxing speaker baru\u0027 },\n    { p:\u0027Challenge Version\u0027, t:\u0027Versi {produk} dari {challenge_trend} yang lagi viral\u0027, e:\u0027Versi earphone dari that girl challenge yang lagi viral\u0027 }\n  ]\n};\n\nfunction formatHooks() {\n  const out = [];\n  const types = Object.keys(HOOK_FORMULAS);\n  for (let i = 0; i \u003c types.length; i++) {\n    const type = types[i];\n    out.push(type + \u0027:\u0027);\n    const arr = HOOK_FORMULAS[type];\n    for (let j = 0; j \u003c arr.length; j++) {\n      const f = arr[j];\n      out.push(\u0027  - [\u0027 + f.p + \u0027] Template: \u0027 + f.t + \u0027 | Contoh: \u0027 + f.e);\n    }\n  }\n  return out.join(\u0027\\n\u0027);\n}\n\nconst POSTING_SCHEDULE = \u0027Peak posting hours TikTok Indonesia berdasarkan jenis konten:\\n- Entertain: 19:00-22:00 WIB (prime time hiburan malam)\\n- Softselling: 11:00-13:00 dan 20:00-21:00 WIB (browse saat makan siang + malam)\\n- Edukasi: 07:00-08:00 dan 12:00 WIB (pagi sebelum aktivitas + istirahat)\\n- Hardselling: 12:00-13:00 dan 19:00-20:00 WIB (impulse buying moment)\\n- Trend: 18:00-21:00 WIB (scrolling setelah kerja/sekolah)\u0027;\n\nconst painText = (painPoints \u0026\u0026 painPoints.length \u003e 0) ? (\u0027Pain Points Pembeli (dari review nyata): \u0027 + painPoints.join(\u0027 | \u0027) + \u0027\\n\u0027) : \u0027\u0027;\nconst compText = (competitorAngles \u0026\u0026 competitorAngles.length \u003e 0) ? (\u0027Angle Kompetitor yang Sudah Terbukti: \u0027 + competitorAngles.join(\u0027 | \u0027) + \u0027\\n\u0027) : \u0027\u0027;\n\nconst prompt = \u0027Kamu adalah content strategist TikTok untuk affiliator Indonesia.\\nBuat content plan \u0027 + durationDays + \u0027 hari untuk produk berikut:\\n\\nProduk: \u0027 + product.name + \u0027\\nSelling Points: \u0027 + sellingPoints.join(\u0027, \u0027) + \u0027\\nTarget Market: \u0027 + (product.target_market || \u0027\u0027) + \u0027\\nTrending Keywords: \u0027 + (keywords.length \u003e 0 ? keywords.join(\u0027, \u0027) : \u0027tidak ada data\u0027) + \u0027\\n\u0027 + painText + compText + \u0027Tanggal Mulai: \u0027 + startDate + \u0027\\n\\n\u0027 + POSTING_SCHEDULE + \u0027\\n\\nHook formulas yang terbukti convert per jenis konten:\\n\u0027 + formatHooks() + \u0027\\n\\nBuat \u0027 + durationDays + \u0027 konten, satu per hari. Variasikan jenis konten:\\n- Entertain (POV, storytime, relatable) gunakan hook formula Entertain\\n- Softselling (review natural, before-after) gunakan hook formula Softselling\\n- Edukasi (tips, cara memilih, perbandingan) gunakan hook formula Edukasi\\n- Hardselling (promosi langsung, urgency) gunakan hook formula Hardselling\\n- Trend (ikuti trend/sound TikTok) gunakan hook formula Trend\\n\\nPENTING: Jika ada data Pain Points, buat konten yang langsung menyentuh keluhan nyata tersebut.\\nPENTING: Jika ada Angle Kompetitor, variasikan agar tidak terlalu mirip tapi tetap relevan.\\nPENTING: Pilih post_time sesuai peak hour content_type yang dipilih.\\n\\nATURAN KETAT FORMAT:\\n- Gunakan HANYA kutip ganda \\\" untuk semua key DAN value string. TIDAK BOLEH pakai kutip tunggal apostrof.\\n- Tutup setiap string dengan kutip ganda yang sama, JANGAN campur dengan kutip tunggal.\\n- Output HANYA JSON array, mulai dengan [ dan akhiri dengan ].\\n\\nOutput JSON array:\\n[{\\n  \"row_number\": 1,\\n  \"post_date\": \"YYYY-MM-DD\",\\n  \"post_time\": \"HH:MM\",\\n  \"title\": \"judul konten yang menarik\",\\n  \"content_type\": \"Entertain|Softselling|Edukasi|Hardselling|Trend\",\\n  \"post_type\": \"Video TikTok|Video + Story|Story|Live\",\\n  \"hook\": \"kalimat hook pembuka menggunakan formula yang sesuai\",\\n  \"caption\": \"caption TikTok (max 200 karakter)\",\\n  \"hashtags\": [\"#tag1\", \"#tag2\", \"#tag3\", \"#tag4\", \"#tag5\"]\\n}]\u0027;\n\nreturn [{ json: { prompt: prompt, product: product, durationDays: durationDays, startDate: startDate, dbUserId: dbUserId, chatId: chatId } }];"
+                                     },
+                      "id":  "0c9bd0a6-ee7d-44dd-9fd6-bcd86d7a62bf",
+                      "name":  "Build AI Prompt",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       7392,
+                                       784
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://api.groq.com/openai/v1/chat/completions",
+                                         "authentication":  "genericCredentialType",
+                                         "genericAuthType":  "httpHeaderAuth",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ model: \u0027meta-llama/llama-4-scout-17b-16e-instruct\u0027, messages: [{ role: \u0027user\u0027, content: $json.prompt }], temperature: 0.7, max_tokens: 4096 }) }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "ffaa492c-7784-47a1-b137-e29366f3478e",
+                      "name":  "Generate Plan with AI",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       7616,
+                                       784
+                                   ],
+                      "retryOnFail":  true,
+                      "maxTries":  3,
+                      "waitBetweenTries":  5000,
+                      "credentials":  {
+                                          "httpHeaderAuth":  {
+                                                                 "id":  "",
+                                                                 "name":  null
+                                                             }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "function tryParse(s) {\n  try { return JSON.parse(s); } catch(e) { return null; }\n}\n\nfunction repairHashtags(s) {\n  // Fix bare hashtag missing leading quote inside array, e.g. , #Tag\" or [ #Tag\"\n  return s.replace(/([\\[,]\\s*)#([^\",\\]\\}]+)\"/g, \u0027$1\"#$2\"\u0027);\n}\n\nfunction repairAndParse(raw) {\n  let s = String(raw || \u0027\u0027).replace(/```json/gi, \u0027\u0027).replace(/```/g, \u0027\u0027).trim();\n\n  let result = tryParse(s);\n  if (Array.isArray(result)) return result;\n  if (result \u0026\u0026 Array.isArray(result.plan)) return result.plan;\n  if (result \u0026\u0026 Array.isArray(result.items)) return result.items;\n\n  // Fix 1: stray single-quote at end of value\n  let fixed = s.replace(/([\\w!?.\\)])\u0027(\\s*[,\\n}\\]])/g, \u0027$1\"$2\u0027);\n  result = tryParse(fixed);\n  if (Array.isArray(result)) return result;\n  if (result \u0026\u0026 Array.isArray(result.plan)) return result.plan;\n\n  // Fix 2: aggressive single-quote replace\n  fixed = s.replace(/\u0027(\\s*[,\\n}\\]])/g, \u0027\"$1\u0027);\n  fixed = fixed.replace(/([,\\n{\\[]\\s*)\u0027/g, \u0027$1\"\u0027);\n  result = tryParse(fixed);\n  if (Array.isArray(result)) return result;\n  if (result \u0026\u0026 Array.isArray(result.plan)) return result.plan;\n\n  // Fix 3: hashtag missing leading quote\n  fixed = repairHashtags(s);\n  result = tryParse(fixed);\n  if (Array.isArray(result)) return result;\n  if (result \u0026\u0026 Array.isArray(result.plan)) return result.plan;\n\n  // Fix 4: extract array substring then apply all repairs\n  const firstBracket = s.indexOf(\u0027[\u0027);\n  const lastBracket = s.lastIndexOf(\u0027]\u0027);\n  if (firstBracket !== -1 \u0026\u0026 lastBracket \u003e firstBracket) {\n    let inner = s.slice(firstBracket, lastBracket + 1);\n    inner = repairHashtags(inner);\n    inner = inner.replace(/([\\w!?.\\)])\u0027(\\s*[,\\n}\\]])/g, \u0027$1\"$2\u0027);\n    result = tryParse(inner);\n    if (Array.isArray(result)) return result;\n  }\n\n  // Fix 5: parse object-by-object, skip malformed ones\n  if (firstBracket !== -1 \u0026\u0026 lastBracket \u003e firstBracket) {\n    const inner = s.slice(firstBracket + 1, lastBracket);\n    const objects = [];\n    let depth = 0, start = -1, inStr = false, esc = false;\n    for (let i = 0; i \u003c inner.length; i++) {\n      const ch = inner[i];\n      if (esc) { esc = false; continue; }\n      if (ch === \u0027\\\\\u0027) { esc = true; continue; }\n      if (ch === \u0027\"\u0027) { inStr = !inStr; continue; }\n      if (inStr) continue;\n      if (ch === \u0027{\u0027) { if (depth === 0) start = i; depth++; }\n      else if (ch === \u0027}\u0027) {\n        depth--;\n        if (depth === 0 \u0026\u0026 start !== -1) {\n          let obj = inner.slice(start, i + 1);\n          obj = repairHashtags(obj);\n          obj = obj.replace(/([\\w!?.\\)])\u0027(\\s*[,\\n}\\]])/g, \u0027$1\"$2\u0027);\n          const parsed = tryParse(obj);\n          if (parsed) objects.push(parsed);\n          start = -1;\n        }\n      }\n    }\n    if (objects.length \u003e 0) return objects;\n  }\n\n  return [];\n}\n\nconst raw = $json.choices \u0026\u0026 $json.choices[0] \u0026\u0026 $json.choices[0].message ? $json.choices[0].message.content : \u0027\u0027;\nconst items = repairAndParse(raw);\n\nconst product = $(\u0027Build AI Prompt\u0027).item.json.product;\nconst durationDays = $(\u0027Build AI Prompt\u0027).item.json.durationDays;\nconst dbUserId = $(\u0027Build AI Prompt\u0027).item.json.dbUserId;\nconst chatId = $(\u0027Build AI Prompt\u0027).item.json.chatId;\nreturn [{ json: { items: items, product: product, durationDays: durationDays, dbUserId: dbUserId, chatId: chatId, _itemCount: items.length, _rawPreview: String(raw || \u0027\u0027).slice(0, 300) } }];"
+                                     },
+                      "id":  "646259b3-513e-431a-85ee-c300c8b57ac4",
+                      "name":  "Parse Plan",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       7840,
+                                       784
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "={{ \u0027INSERT INTO public.content_plans (user_id, product_id, duration_days) VALUES (\\\u0027\u0027 + $json.dbUserId + \u0027\\\u0027, \\\u0027\u0027 + $json.product.id + \u0027\\\u0027, \u0027 + $json.durationDays + \u0027) RETURNING id\u0027 }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "c4aacb43-6360-4a61-b4f6-7663da0c4eda",
+                      "name":  "Create Plan Record",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       8064,
+                                       880
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "",
+                                                           "name":  null
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const PEAK_HOURS = {\n  Entertain:   [\u002719:00\u0027, \u002720:00\u0027, \u002721:00\u0027, \u002722:00\u0027],\n  Softselling: [\u002711:00\u0027, \u002712:00\u0027, \u002720:00\u0027, \u002721:00\u0027],\n  Edukasi:     [\u002707:00\u0027, \u002708:00\u0027, \u002712:00\u0027, \u002716:00\u0027],\n  Hardselling: [\u002712:00\u0027, \u002713:00\u0027, \u002719:00\u0027, \u002720:00\u0027],\n  Trend:       [\u002718:00\u0027, \u002719:00\u0027, \u002720:00\u0027, \u002721:00\u0027]\n};\nconst DAY_MULTIPLIER = { 0: 1, 1: 0, 2: 0, 3: 1, 4: 0, 5: 1, 6: 2 };\n\nfunction getOptimalPostTime(contentType, postDateStr) {\n  const hours = PEAK_HOURS[contentType] || PEAK_HOURS.Entertain;\n  const date = new Date(postDateStr);\n  const dayOfWeek = date.getDay();\n  const multiplier = DAY_MULTIPLIER[dayOfWeek] || 0;\n  return hours[multiplier % hours.length];\n}\n\nconst planId = $json.id;\nconst items = $(\u0027Parse Plan\u0027).item.json.items;\nconst productName = $(\u0027Parse Plan\u0027).item.json.product.name;\n\nreturn items.map(function(item, idx) { item.row_number = idx + 1;\n  const hashtagsArray = Array.isArray(item.hashtags) ? item.hashtags : [];\n  const hashtagsPg = hashtagsArray.length ? (\u0027{\"\u0027 + hashtagsArray.map(function(h) { return String(h).replace(/\"/g, \u0027\\\\\"\u0027); }).join(\u0027\",\"\u0027) + \u0027\"}\u0027) : \u0027{}\u0027;\n\n  const postTime = item.post_time || getOptimalPostTime(item.content_type, item.post_date);\n\n  return {\n    json: {\n      plan_id: planId,\n      row_number: item.row_number,\n      post_date: item.post_date,\n      post_time: postTime,\n      product_name: productName,\n      title: item.title,\n      content_type: ([\u0027Entertain\u0027,\u0027Softselling\u0027,\u0027Edukasi\u0027,\u0027Hardselling\u0027,\u0027Trend\u0027,\u0027Problem-Solution\u0027].indexOf(item.content_type) \u003e= 0 ? item.content_type : \u0027Entertain\u0027),\n      post_type: item.post_type,\n      hook: item.hook,\n      caption: item.caption,\n      hashtags: hashtagsPg,\n      status: \u0027pending\u0027\n    }\n  };\n});"
+                                     },
+                      "id":  "151386b5-ffc3-469e-aafb-a0c85349c4f5",
+                      "name":  "Prepare Content Items",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       8288,
+                                       880
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "={{ \u0027INSERT INTO public.content_items (plan_id, row_number, post_date, post_time, product_name, title, content_type, post_type, hook, caption, hashtags, status) VALUES (\\\u0027\u0027 + $json.plan_id + \u0027\\\u0027, \u0027 + $json.row_number + \u0027, \\\u0027\u0027 + $json.post_date + \u0027\\\u0027, \\\u0027\u0027 + String($json.post_time || \"\") + \u0027\\\u0027, \\\u0027\u0027 + String($json.product_name || \"\").replace(/\\\u0027/g, \"\u0027\u0027\") + \u0027\\\u0027, \\\u0027\u0027 + String($json.title || \"\").replace(/\\\u0027/g, \"\u0027\u0027\") + \u0027\\\u0027, \\\u0027\u0027 + String($json.content_type || \"\") + \u0027\\\u0027, \\\u0027\u0027 + String($json.post_type || \"\") + \u0027\\\u0027, \\\u0027\u0027 + String($json.hook || \"\").replace(/\\\u0027/g, \"\u0027\u0027\") + \u0027\\\u0027, \\\u0027\u0027 + String($json.caption || \"\").replace(/\\\u0027/g, \"\u0027\u0027\") + \u0027\\\u0027, \\\u0027\u0027 + String($json.hashtags || \"{}\").replace(/\\\u0027/g, \"\u0027\u0027\") + \u0027\\\u0027, \\\u0027pending\\\u0027)\u0027 }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "e9b13e4c-52b2-4bbd-825c-8c42694c8099",
+                      "name":  "Insert Content Items",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       8512,
+                                       880
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "",
+                                                           "name":  null
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "chatId":  "={{ $(\u0027Parse Plan\u0027).item.json.chatId }}",
+                                         "text":  "=✅ \u003cb\u003eContent Plan Selesai!\u003c/b\u003e\n\n📅 \u003cb\u003e{{ $(\u0027Parse Plan\u0027).item.json.durationDays }} Konten\u003c/b\u003e siap untuk produk \u003cb\u003e{{ $(\u0027Parse Plan\u0027).item.json.product.name }}\u003c/b\u003e\n\n📊 \u003ca href=\"{{ $(\u0027Create Google Spreadsheet\u0027).item.json.spreadsheetUrl }}\"\u003eBuka Spreadsheet\u003c/a\u003e\n\n📝 \u003cb\u003e{{ $(\u0027Collect Doc URLs\u0027).item.json.docCount }} Skrip Google Docs\u003c/b\u003e sudah dibuat (1 Doc per konten).\n\nKlik kolom \u003cb\u003eLink Script\u003c/b\u003e di spreadsheet untuk buka Doc skrip masing-masing.",
+                                         "additionalFields":  {
+                                                                  "appendAttribution":  false,
+                                                                  "parse_mode":  "HTML"
+                                                              },
+                                         "resource":  "message",
+                                         "operation":  "sendMessage"
+                                     },
+                      "id":  "bd92d226-5fa2-4b69-8cd6-7f68aac00dff",
+                      "name":  "Send Result",
+                      "type":  "n8n-nodes-base.telegram",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       12544,
+                                       784
+                                   ],
+                      "webhookId":  "0869734d-9807-4823-9e3f-a75583ab0830",
+                      "credentials":  {
+                                          "telegramApi":  {
+                                                              "id":  "",
+                                                              "name":  null
+                                                          }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const items = $(\u0027Prepare Content Items\u0027).all().map(function(i){return i.json;});\nconst product = $(\u0027Parse Plan\u0027).item.json.product;\nconst durationDays = $(\u0027Parse Plan\u0027).item.json.durationDays;\nconst planId = $(\u0027Create Plan Record\u0027).item.json.id;\nconst chatId = $(\u0027Parse Plan\u0027).item.json.chatId;\n\nlet docUrlMap = {};\ntry { docUrlMap = $(\u0027Collect Doc URLs\u0027).item.json.docUrlMap || {}; } catch(e) { docUrlMap = {}; }\n\nconst SOUND_HINT = {\n  Entertain: \u0027Viral sound TikTok ID (cek Creative Center)\u0027,\n  Softselling: \u0027Lofi / chill instrumental\u0027,\n  Edukasi: \u0027Light instrumental volume rendah\u0027,\n  Hardselling: \u0027Hype beat / drop beat\u0027,\n  Trend: \u0027#1 Trending sound TikTok ID hari ini\u0027\n};\n\nfunction parseHashtags(raw){\n  if(Array.isArray(raw)) return raw.join(\u0027 \u0027);\n  if(typeof raw === \u0027string\u0027){\n    let s = raw.trim();\n    if(s.indexOf(\u0027{\u0027)===0 \u0026\u0026 s.lastIndexOf(\u0027}\u0027)===s.length-1) s = s.slice(1,-1);\n    return s.split(\u0027,\u0027).map(function(t){return t.trim().replace(/^\"|\"$/g,\u0027\u0027).replace(/\\\\\"/g,\u0027\"\u0027);}).join(\u0027 \u0027);\n  }\n  return \u0027\u0027;\n}\n\nfunction escForFormula(s){ return String(s||\u0027\u0027).replace(/\"/g,\u0027\"\"\u0027); }\n\nconst sortedItems = items.slice().sort(function(a,b){return (a.row_number||0)-(b.row_number||0);});\nconst dates = sortedItems.map(function(i){return i.post_date;}).filter(Boolean).sort();\nconst periodeText = dates.length ? (\u0027Periode : \u0027 + dates[0] + \u0027 - \u0027 + dates[dates.length-1]) : \u0027Periode : -\u0027;\n\nconst headers = [\u0027No\u0027,\u0027Tanggal Posting\u0027,\u0027Nama Produk\u0027,\u0027Judul Konten\u0027,\u0027Jenis Konten\u0027,\u0027Post Type\u0027,\u0027Hook / Headline\u0027,\u0027Caption TikTok\u0027,\u0027Hashtag\u0027,\u0027Link Script (Google Docs)\u0027,\u0027Ide Musik/Tren\u0027,\u0027Status\u0027,\u0027Jam Posting\u0027];\nconst NUM_COLS = headers.length;\n\nfunction padRow(arr){\n  const out = arr.slice();\n  while(out.length \u003c NUM_COLS) out.push(\u0027\u0027);\n  return out;\n}\n\nconst dataRows = sortedItems.map(function(item){\n  const rn = item.row_number || \u0027\u0027;\n  const docUrl = docUrlMap[String(rn)] || \u0027\u0027;\n  const linkText = \u0027Buka Script #\u0027 + rn;\n  const linkCell = docUrl || linkText;\n  return [\n    String(rn),\n    item.post_date || \u0027\u0027,\n    item.product_name || \u0027\u0027,\n    item.title || \u0027\u0027,\n    item.content_type || \u0027\u0027,\n    item.post_type || \u0027\u0027,\n    item.hook || \u0027\u0027,\n    item.caption || \u0027\u0027,\n    parseHashtags(item.hashtags),\n    linkCell,\n    SOUND_HINT[item.content_type] || \u0027\u0027,\n    \u0027Menunggu\u0027,\n    item.post_time || \u0027\u0027\n  ];\n});\n\nconst titleRow = padRow([\u0027CONTENT PLAN\u0027]);\nconst periodeRow = padRow([periodeText]);\nconst values = [titleRow, periodeRow, headers].concat(dataRows);\nconst sheetTitle = \u0027MR. PLANNER - \u0027 + product.name + \u0027 - \u0027 + durationDays + \u0027 hari - \u0027 + new Date().toISOString().slice(0,10);\n\nreturn [{ json: {\n  sheetTitle: sheetTitle,\n  values: values,\n  numCols: NUM_COLS,\n  planId: planId,\n  chatId: chatId,\n  durationDays: durationDays,\n  productName: product.name,\n  docCount: Object.keys(docUrlMap).length\n}}];"
+                                     },
+                      "id":  "36c1c552-6da6-4de3-a37b-f7b3384203ee",
+                      "name":  "Build Sheet Data",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       11200,
+                                       784
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://sheets.googleapis.com/v4/spreadsheets",
+                                         "authentication":  "predefinedCredentialType",
+                                         "nodeCredentialType":  "googleSheetsOAuth2Api",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ properties: { title: $json.sheetTitle }, sheets: [ { properties: { title: \u0027Plan\u0027 } } ] }) }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "f2a74266-eb81-4a4b-9898-99f064737c1c",
+                      "name":  "Create Google Spreadsheet",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       11424,
+                                       784
+                                   ],
+                      "credentials":  {
+                                          "googleSheetsOAuth2Api":  {
+                                                                        "id":  "",
+                                                                        "name":  null
+                                                                    }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "PUT",
+                                         "url":  "={{ \u0027https://sheets.googleapis.com/v4/spreadsheets/\u0027 + $json.spreadsheetId + \u0027/values/Plan!A1?valueInputOption=USER_ENTERED\u0027 }}",
+                                         "authentication":  "predefinedCredentialType",
+                                         "nodeCredentialType":  "googleSheetsOAuth2Api",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ values: $(\u0027Build Sheet Data\u0027).item.json.values }) }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "f2f4202b-e6e9-4dfe-9a60-fb399864f70b",
+                      "name":  "Populate Spreadsheet",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       11648,
+                                       784
+                                   ],
+                      "credentials":  {
+                                          "googleSheetsOAuth2Api":  {
+                                                                        "id":  "",
+                                                                        "name":  null
+                                                                    }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ \u0027https://www.googleapis.com/drive/v3/files/\u0027 + $(\u0027Create Google Spreadsheet\u0027).item.json.spreadsheetId + \u0027/permissions\u0027 }}",
+                                         "authentication":  "predefinedCredentialType",
+                                         "nodeCredentialType":  "googleSheetsOAuth2Api",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ role: \u0027reader\u0027, type: \u0027anyone\u0027 }) }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "ad106fec-d2f0-47dc-aadc-abdbd071bf42",
+                      "name":  "Make Spreadsheet Public",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       12096,
+                                       784
+                                   ],
+                      "credentials":  {
+                                          "googleSheetsOAuth2Api":  {
+                                                                        "id":  "",
+                                                                        "name":  null
+                                                                    }
+                                      },
+                      "onError":  "continueRegularOutput"
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "={{ \"UPDATE public.content_plans SET spreadsheet_url = \u0027\" + $(\u0027Create Google Spreadsheet\u0027).item.json.spreadsheetUrl + \"\u0027, status = \u0027done\u0027 WHERE id = \u0027\" + $(\u0027Build Sheet Data\u0027).item.json.planId + \"\u0027\" }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "0efed73b-b6b1-4bac-aee9-317d70c86a9c",
+                      "name":  "Update Plan URL",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       12320,
+                                       784
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "",
+                                                           "name":  null
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ \u0027https://sheets.googleapis.com/v4/spreadsheets/\u0027 + $(\u0027Create Google Spreadsheet\u0027).item.json.spreadsheetId + \u0027:batchUpdate\u0027 }}",
+                                         "authentication":  "predefinedCredentialType",
+                                         "nodeCredentialType":  "googleSheetsOAuth2Api",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ requests: [ { mergeCells: { range: { sheetId: $(\u0027Create Google Spreadsheet\u0027).item.json.sheets[0].properties.sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: $(\u0027Build Sheet Data\u0027).item.json.numCols }, mergeType: \u0027MERGE_ALL\u0027 } }, { mergeCells: { range: { sheetId: $(\u0027Create Google Spreadsheet\u0027).item.json.sheets[0].properties.sheetId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: $(\u0027Build Sheet Data\u0027).item.json.numCols }, mergeType: \u0027MERGE_ALL\u0027 } }, { repeatCell: { range: { sheetId: $(\u0027Create Google Spreadsheet\u0027).item.json.sheets[0].properties.sheetId, startRowIndex: 0, endRowIndex: 1 }, cell: { userEnteredFormat: { horizontalAlignment: \u0027CENTER\u0027, verticalAlignment: \u0027MIDDLE\u0027, textFormat: { bold: true, fontSize: 18 }, backgroundColor: { red: 0.96, green: 0.96, blue: 0.96 } } }, fields: \u0027userEnteredFormat(horizontalAlignment,verticalAlignment,textFormat,backgroundColor)\u0027 } }, { repeatCell: { range: { sheetId: $(\u0027Create Google Spreadsheet\u0027).item.json.sheets[0].properties.sheetId, startRowIndex: 1, endRowIndex: 2 }, cell: { userEnteredFormat: { horizontalAlignment: \u0027CENTER\u0027, textFormat: { italic: true, fontSize: 11 } } }, fields: \u0027userEnteredFormat(horizontalAlignment,textFormat)\u0027 } }, { repeatCell: { range: { sheetId: $(\u0027Create Google Spreadsheet\u0027).item.json.sheets[0].properties.sheetId, startRowIndex: 2, endRowIndex: 3 }, cell: { userEnteredFormat: { backgroundColor: { red: 0.78, green: 0.92, blue: 0.78 }, textFormat: { bold: true }, horizontalAlignment: \u0027CENTER\u0027, verticalAlignment: \u0027MIDDLE\u0027, wrapStrategy: \u0027WRAP\u0027 } }, fields: \u0027userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)\u0027 } }, { repeatCell: { range: { sheetId: $(\u0027Create Google Spreadsheet\u0027).item.json.sheets[0].properties.sheetId, startRowIndex: 3 }, cell: { userEnteredFormat: { verticalAlignment: \u0027MIDDLE\u0027, wrapStrategy: \u0027WRAP\u0027 } }, fields: \u0027userEnteredFormat(verticalAlignment,wrapStrategy)\u0027 } }, { updateSheetProperties: { properties: { sheetId: $(\u0027Create Google Spreadsheet\u0027).item.json.sheets[0].properties.sheetId, gridProperties: { frozenRowCount: 3 } }, fields: \u0027gridProperties.frozenRowCount\u0027 } }, { updateDimensionProperties: { range: { sheetId: $(\u0027Create Google Spreadsheet\u0027).item.json.sheets[0].properties.sheetId, dimension: \u0027ROWS\u0027, startIndex: 0, endIndex: 1 }, properties: { pixelSize: 48 }, fields: \u0027pixelSize\u0027 } }, { updateDimensionProperties: { range: { sheetId: $(\u0027Create Google Spreadsheet\u0027).item.json.sheets[0].properties.sheetId, dimension: \u0027ROWS\u0027, startIndex: 2, endIndex: 3 }, properties: { pixelSize: 44 }, fields: \u0027pixelSize\u0027 } }, { autoResizeDimensions: { dimensions: { sheetId: $(\u0027Create Google Spreadsheet\u0027).item.json.sheets[0].properties.sheetId, dimension: \u0027COLUMNS\u0027, startIndex: 0, endIndex: $(\u0027Build Sheet Data\u0027).item.json.numCols } } }, { setDataValidation: { range: { sheetId: $(\u0027Create Google Spreadsheet\u0027).item.json.sheets[0].properties.sheetId, startRowIndex: 3, endRowIndex: 1000, startColumnIndex: 11, endColumnIndex: 12 }, rule: { condition: { type: \u0027ONE_OF_LIST\u0027, values: [ { userEnteredValue: \u0027Terposting\u0027 }, { userEnteredValue: \u0027Terjadwal\u0027 }, { userEnteredValue: \u0027Produksi\u0027 }, { userEnteredValue: \u0027Menunggu\u0027 } ] }, showCustomUi: true, strict: true } } }, { addConditionalFormatRule: { rule: { ranges: [ { sheetId: $(\u0027Create Google Spreadsheet\u0027).item.json.sheets[0].properties.sheetId, startRowIndex: 3, endRowIndex: 1000, startColumnIndex: 11, endColumnIndex: 12 } ], booleanRule: { condition: { type: \u0027TEXT_EQ\u0027, values: [ { userEnteredValue: \u0027Terposting\u0027 } ] }, format: { backgroundColor: { red: 0.71, green: 0.87, blue: 0.71 }, textFormat: { bold: true, foregroundColor: { red: 0.11, green: 0.37, blue: 0.13 } } } } }, index: 0 } }, { addConditionalFormatRule: { rule: { ranges: [ { sheetId: $(\u0027Create Google Spreadsheet\u0027).item.json.sheets[0].properties.sheetId, startRowIndex: 3, endRowIndex: 1000, startColumnIndex: 11, endColumnIndex: 12 } ], booleanRule: { condition: { type: \u0027TEXT_EQ\u0027, values: [ { userEnteredValue: \u0027Terjadwal\u0027 } ] }, format: { backgroundColor: { red: 0.78, green: 0.86, blue: 0.96 }, textFormat: { bold: true, foregroundColor: { red: 0.10, green: 0.28, blue: 0.58 } } } } }, index: 1 } }, { addConditionalFormatRule: { rule: { ranges: [ { sheetId: $(\u0027Create Google Spreadsheet\u0027).item.json.sheets[0].properties.sheetId, startRowIndex: 3, endRowIndex: 1000, startColumnIndex: 11, endColumnIndex: 12 } ], booleanRule: { condition: { type: \u0027TEXT_EQ\u0027, values: [ { userEnteredValue: \u0027Produksi\u0027 } ] }, format: { backgroundColor: { red: 0.99, green: 0.86, blue: 0.72 }, textFormat: { bold: true, foregroundColor: { red: 0.60, green: 0.31, blue: 0.05 } } } } }, index: 2 } }, { addConditionalFormatRule: { rule: { ranges: [ { sheetId: $(\u0027Create Google Spreadsheet\u0027).item.json.sheets[0].properties.sheetId, startRowIndex: 3, endRowIndex: 1000, startColumnIndex: 11, endColumnIndex: 12 } ], booleanRule: { condition: { type: \u0027TEXT_EQ\u0027, values: [ { userEnteredValue: \u0027Menunggu\u0027 } ] }, format: { backgroundColor: { red: 0.93, green: 0.93, blue: 0.93 }, textFormat: { bold: true, foregroundColor: { red: 0.36, green: 0.36, blue: 0.36 } } } } }, index: 3 } } ] }) }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "19b05599-6eae-492e-ab7b-2a600c84f949",
+                      "name":  "Format Spreadsheet",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       11872,
+                                       784
+                                   ],
+                      "credentials":  {
+                                          "googleSheetsOAuth2Api":  {
+                                                                        "id":  "",
+                                                                        "name":  null
+                                                                    }
+                                      },
+                      "onError":  "continueRegularOutput"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const items = $(\u0027Prepare Content Items\u0027).all().map(function(i){return i.json;});\nconst product = $(\u0027Parse Plan\u0027).item.json.product;\nconst productName = product.name;\nlet sellingPoints = product.selling_points || [];\nif (typeof sellingPoints === \u0027string\u0027) { try { sellingPoints = JSON.parse(sellingPoints); } catch(e) { sellingPoints = []; } }\n\nconst HOOK_FORMULAS = {\n  Entertain: [\n    { p:\u0027POV Relatable\u0027, t:\u0027POV: situasi relatable dengan produk\u0027, e:\u0027POV: Akhirnya nemu earphone yang nggak bikin kuping sakit\u0027 },\n    { p:\u0027Curiosity Gap\u0027, t:\u0027Gue hampir nggak percaya fakta_mengejutkan\u0027, e:\u0027Gue hampir nggak percaya earphone 200rb bisa ngalahin yang 1jt\u0027 },\n    { p:\u0027Storytime\u0027, t:\u0027Cerita lalu yang akhirnya bikin gue switch\u0027, e:\u0027Cerita 3 bulan lalu yang akhirnya bikin gue switch ke speaker ini\u0027 }\n  ],\n  Softselling: [\n    { p:\u0027Problem-Solution\u0027, t:\u0027Udah capek dengan pain_point?\u0027, e:\u0027Udah capek earphone putus terus?\u0027 },\n    { p:\u0027Before-After\u0027, t:\u0027Sebelum vs Setelah pakai\u0027, e:\u0027Sebelum: meeting berisik. Setelah: jernih banget\u0027 },\n    { p:\u0027Honest Review\u0027, t:\u0027Jujur review setelah durasi pemakaian\u0027, e:\u0027Jujur review setelah 3 bulan\u0027 }\n  ],\n  Edukasi: [\n    { p:\u0027Number Tips\u0027, t:\u0027N hal yang wajib tau sebelum beli\u0027, e:\u00275 hal yang wajib tau sebelum beli earphone gaming\u0027 },\n    { p:\u0027Warning Hook\u0027, t:\u0027Stop dulu, jangan beli sebelum tau ini\u0027, e:\u0027Stop dulu, jangan beli earphone sebelum tau ini\u0027 },\n    { p:\u0027Comparison\u0027, t:\u0027Bedanya produk mahal vs murah\u0027, e:\u0027Bedanya AirPods vs earphone ini yang 800rb lebih murah\u0027 }\n  ],\n  Hardselling: [\n    { p:\u0027Urgency Scarcity\u0027, t:\u0027Stok tinggal N!\u0027, e:\u0027Stok tinggal 50! Speaker diskon 40% sekarang\u0027 },\n    { p:\u0027Price Shock\u0027, t:\u0027Harga X untuk kualitas Y?\u0027, e:\u0027Harga 150rb untuk kualitas sekelas ini? Beneran\u0027 },\n    { p:\u0027FOMO\u0027, t:\u0027N orang udah order hari ini\u0027, e:\u0027500 orang udah order hari ini, kamu?\u0027 }\n  ],\n  Trend: [\n    { p:\u0027Trend Ride\u0027, t:\u0027Ikut trend tapi pakai produk\u0027, e:\u0027Ikut trend silent walking tapi pakai earphone ini\u0027 },\n    { p:\u0027Sound Match\u0027, t:\u0027Sound ini cocok sama momen produk\u0027, e:\u0027Sound ini terlalu cocok sama momen unboxing speaker baru\u0027 }\n  ]\n};\n\nfunction formatHooksFor(ct) {\n  const arr = HOOK_FORMULAS[ct] || HOOK_FORMULAS.Entertain;\n  return arr.map(function(f){ return \u0027  - [\u0027 + f.p + \u0027] \u0027 + f.t + \u0027 contoh: \u0027 + f.e; }).join(\u0027\\n\u0027);\n}\n\nconst sorted = items.slice().sort(function(a,b){return (a.row_number||0)-(b.row_number||0);});\n\nreturn sorted.map(function(item){\n  const ct = item.content_type || \u0027Entertain\u0027;\n  const prompt = \u0027Kamu adalah script writer konten TikTok untuk affiliator Indonesia.\\nBuat STORYBOARD SCRIPT video TikTok format scene-by-scene berdasarkan brief:\\n\\nJudul: \u0027 + (item.title || \u0027\u0027) + \u0027\\nJenis Konten: \u0027 + ct + \u0027\\nHook Awal: \u0027 + (item.hook || \u0027\u0027) + \u0027\\nCaption: \u0027 + (item.caption || \u0027\u0027) + \u0027\\nProduk: \u0027 + productName + \u0027\\nSelling Points: \u0027 + sellingPoints.join(\u0027, \u0027) + \u0027\\n\\nHook formulas untuk \u0027 + ct + \u0027:\\n\u0027 + formatHooksFor(ct) + \u0027\\n\\nOUTPUT HANYA JSON valid (tanpa markdown fence, tanpa preamble) dengan format persis:\\n{\\n  \"goal\": \"tujuan strategis singkat (cth: Menarik perhatian (Traffic) \u0026 Softselling)\",\\n  \"post_type\": \"Video TikTok (9:16)\",\\n  \"storyboard\": [\\n    {\"durasi\": \"00:00 - 00:03\", \"visual\": \"(Hook) deskripsi adegan visual\", \"audio\": \"(Musik X) VO: kalimat voiceover dalam tanda kutip\", \"text_overlay\": \"teks yang tampil di layar\"},\\n    {\"durasi\": \"00:03 - 00:07\", \"visual\": \"...\", \"audio\": \"...\", \"text_overlay\": \"...\"}\\n  ]\\n}\\n\\nATURAN KETAT:\\n1. Kutip ganda untuk SEMUA key dan value\\n2. Storyboard 6-8 scenes total (cover hook, problem, build-up, solution/reveal product, demo, CTA)\\n3. Format durasi MM:SS - MM:SS, total video 30-50 detik\\n4. visual: deskriptif sinematik, sebut camera angle/gerakan/ekspresi\\n5. audio: format \"(jenis musik mood) VO: ...kalimat...\"\\n6. text_overlay: ringkas, max 8 kata, gunakan emoji yang relevan\u0027;\n\n  return { json: {\n    row_number: item.row_number,\n    title: item.title || \u0027\u0027,\n    content_type: ct,\n    post_date: item.post_date || \u0027\u0027,\n    post_type: item.post_type || \u0027Video TikTok\u0027,\n    prompt: prompt\n  }};\n});"
+                                     },
+                      "id":  "bdd24638-2856-4697-bf4b-a51d74d96336",
+                      "name":  "Build Script Prompts",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       8736,
+                                       880
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://api.groq.com/openai/v1/chat/completions",
+                                         "authentication":  "genericCredentialType",
+                                         "genericAuthType":  "httpHeaderAuth",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ model: \u0027meta-llama/llama-4-scout-17b-16e-instruct\u0027, messages: [{ role: \u0027user\u0027, content: $json.prompt }], temperature: 0.7, max_tokens: 1200 }) }}",
+                                         "options":  {
+                                                         "batching":  {
+                                                                          "batch":  {
+                                                                                        "batchSize":  1,
+                                                                                        "batchInterval":  3000
+                                                                                    }
+                                                                      }
+                                                     }
+                                     },
+                      "id":  "b0254a79-1b48-429f-bdc5-04d3fc39ac75",
+                      "name":  "Generate Script with AI",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       8960,
+                                       880
+                                   ],
+                      "retryOnFail":  true,
+                      "maxTries":  3,
+                      "waitBetweenTries":  5000,
+                      "credentials":  {
+                                          "httpHeaderAuth":  {
+                                                                 "id":  "",
+                                                                 "name":  null
+                                                             }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "function extractJSON(raw){\n  if(!raw) return null;\n  const s = String(raw).replace(/```json/gi,\u0027\u0027).replace(/```/g,\u0027\u0027).trim();\n  const firstBrace = s.indexOf(\u0027{\u0027);\n  if(firstBrace === -1) return null;\n  let depth=0, end=-1, inStr=false, esc=false;\n  for(let i=firstBrace; i\u003cs.length; i++){\n    const ch=s[i];\n    if(esc){esc=false; continue;}\n    if(ch===\u0027\\\\\u0027){esc=true; continue;}\n    if(ch===\u0027\"\u0027){inStr=!inStr; continue;}\n    if(inStr) continue;\n    if(ch===\u0027{\u0027) depth++;\n    else if(ch===\u0027}\u0027){ depth--; if(depth===0){end=i; break;} }\n  }\n  if(end===-1) return null;\n  try { return JSON.parse(s.slice(firstBrace, end+1)); } catch(e) { return null; }\n}\n\nconst responses = $input.all();\nconst prompts = $(\u0027Build Script Prompts\u0027).all().map(function(i){return i.json;});\nconst product = $(\u0027Parse Plan\u0027).item.json.product;\nconst durationDays = $(\u0027Parse Plan\u0027).item.json.durationDays;\n\nconst scripts = responses.map(function(res, i){\n  const content = res.json \u0026\u0026 res.json.choices \u0026\u0026 res.json.choices[0] \u0026\u0026 res.json.choices[0].message ? res.json.choices[0].message.content : \u0027\u0027;\n  const parsed = extractJSON(content) || {};\n  const p = prompts[i] || {};\n  return {\n    row_number: p.row_number || (i+1),\n    title: p.title || \u0027\u0027,\n    content_type: p.content_type || \u0027\u0027,\n    post_date: p.post_date || \u0027\u0027,\n    post_type: p.post_type || \u0027Video TikTok\u0027,\n    goal: parsed.goal || \u0027-\u0027,\n    storyboard: Array.isArray(parsed.storyboard) ? parsed.storyboard : []\n  };\n});\n\nscripts.sort(function(a,b){return (a.row_number||0)-(b.row_number||0);});\n\nreturn [{ json: { scripts: scripts, productName: product.name, scriptCount: scripts.length, durationDays: durationDays } }];"
+                                     },
+                      "id":  "fc71bd0e-fdc6-4acc-9850-59999255a80e",
+                      "name":  "Aggregate Scripts",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       9184,
+                                       880
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://docs.googleapis.com/v1/documents",
+                                         "authentication":  "predefinedCredentialType",
+                                         "nodeCredentialType":  "googleSheetsOAuth2Api",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ title: $json.docTitle }) }}",
+                                         "options":  {
+                                                         "batching":  {
+                                                                          "batch":  {
+                                                                                        "batchSize":  2,
+                                                                                        "batchInterval":  1200
+                                                                                    }
+                                                                      }
+                                                     }
+                                     },
+                      "id":  "25880a58-7ccc-42f3-b22c-3fad589f355c",
+                      "name":  "Create Plan Doc",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       9632,
+                                       784
+                                   ],
+                      "credentials":  {
+                                          "googleSheetsOAuth2Api":  {
+                                                                        "id":  "",
+                                                                        "name":  null
+                                                                    }
+                                      },
+                      "onError":  "continueRegularOutput"
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ \u0027https://docs.googleapis.com/v1/documents/\u0027 + $json.documentId + \u0027:batchUpdate\u0027 }}",
+                                         "authentication":  "predefinedCredentialType",
+                                         "nodeCredentialType":  "googleSheetsOAuth2Api",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ requests: $(\u0027Split Scripts\u0027).item.json.docRequests }) }}",
+                                         "options":  {
+                                                         "batching":  {
+                                                                          "batch":  {
+                                                                                        "batchSize":  2,
+                                                                                        "batchInterval":  1200
+                                                                                    }
+                                                                      }
+                                                     }
+                                     },
+                      "id":  "67c644c3-50bc-4579-b33c-477c7632ac9a",
+                      "name":  "Insert Doc Content",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       9856,
+                                       784
+                                   ],
+                      "credentials":  {
+                                          "googleSheetsOAuth2Api":  {
+                                                                        "id":  "",
+                                                                        "name":  null
+                                                                    }
+                                      },
+                      "onError":  "continueRegularOutput"
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ \u0027https://www.googleapis.com/drive/v3/files/\u0027 + $(\u0027Create Plan Doc\u0027).item.json.documentId + \u0027/permissions\u0027 }}",
+                                         "authentication":  "predefinedCredentialType",
+                                         "nodeCredentialType":  "googleSheetsOAuth2Api",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ role: \u0027reader\u0027, type: \u0027anyone\u0027 }) }}",
+                                         "options":  {
+                                                         "batching":  {
+                                                                          "batch":  {
+                                                                                        "batchSize":  2
+                                                                                    }
+                                                                      }
+                                                     }
+                                     },
+                      "id":  "77eba917-ec48-447d-a7fd-3bf1448dce42",
+                      "name":  "Make Doc Public",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       10752,
+                                       784
+                                   ],
+                      "credentials":  {
+                                          "googleSheetsOAuth2Api":  {
+                                                                        "id":  "",
+                                                                        "name":  null
+                                                                    }
+                                      },
+                      "onError":  "continueRegularOutput"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const scripts = $(\u0027Aggregate Scripts\u0027).item.json.scripts || [];\nconst productName = $(\u0027Aggregate Scripts\u0027).item.json.productName || \u0027\u0027;\n\nreturn scripts.map(function(s){\n  const requests = [];\n  let idx = 1;\n\n  // 1. Title (TITLE style, centered)\n  const titleText = \u0027SCRIPT CONTENT\\n\u0027;\n  requests.push({ insertText: { location: { index: idx }, text: titleText } });\n  requests.push({\n    updateParagraphStyle: {\n      range: { startIndex: idx, endIndex: idx + titleText.length },\n      paragraphStyle: { namedStyleType: \u0027TITLE\u0027, alignment: \u0027CENTER\u0027 },\n      fields: \u0027namedStyleType,alignment\u0027\n    }\n  });\n  idx += titleText.length;\n\n  // 2. Section 1 Header\n  const s1 = \u00271. Informasi Dasar\\n\u0027;\n  requests.push({ insertText: { location: { index: idx }, text: s1 } });\n  requests.push({\n    updateParagraphStyle: {\n      range: { startIndex: idx, endIndex: idx + s1.length },\n      paragraphStyle: { namedStyleType: \u0027HEADING_3\u0027 },\n      fields: \u0027namedStyleType\u0027\n    }\n  });\n  idx += s1.length;\n\n  // 3. Info lines\n  const infoLines = [\n    \u0027Judul     : \u0027 + (s.title || \u0027-\u0027),\n    \u0027Produk    : \u0027 + productName,\n    \u0027Jenis     : \u0027 + (s.content_type || \u0027-\u0027),\n    \u0027Goal      : \u0027 + (s.goal || \u0027-\u0027),\n    \u0027Post Type : \u0027 + (s.post_type || \u0027Video TikTok\u0027)\n  ];\n  const infoText = infoLines.join(\u0027\\n\u0027) + \u0027\\n\\n\u0027;\n  requests.push({ insertText: { location: { index: idx }, text: infoText } });\n  idx += infoText.length;\n\n  // 4. Section 2 Header\n  const s2 = \u00272. Alur Storyboard\\n\u0027;\n  requests.push({ insertText: { location: { index: idx }, text: s2 } });\n  requests.push({\n    updateParagraphStyle: {\n      range: { startIndex: idx, endIndex: idx + s2.length },\n      paragraphStyle: { namedStyleType: \u0027HEADING_3\u0027 },\n      fields: \u0027namedStyleType\u0027\n    }\n  });\n  idx += s2.length;\n\n  // 5. Empty table (header row + scene rows)\n  const sceneCount = (s.storyboard || []).length;\n  const numRows = sceneCount + 1;\n  if (numRows \u003e= 2) {\n    requests.push({\n      insertTable: { location: { index: idx }, rows: numRows, columns: 4 }\n    });\n  }\n\n  return { json: {\n    row_number: s.row_number,\n    title: s.title || \u0027\u0027,\n    docTitle: \u0027MR. PLANNER — Script #\u0027 + s.row_number + \u0027 — \u0027 + (s.title || \u0027\u0027),\n    docRequests: requests,\n    storyboard: s.storyboard || []\n  }};\n});"
+                                     },
+                      "id":  "5221b15a-9e83-4363-b15b-c9645f6f293b",
+                      "name":  "Split Scripts",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       9408,
+                                       784
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const splitItems = $(\u0027Split Scripts\u0027).all();\nconst createItems = $(\u0027Create Plan Doc\u0027).all();\n\nconst docUrlMap = {};\nfor (let i = 0; i \u003c splitItems.length; i++) {\n  const splitJson = splitItems[i].json || {};\n  const createJson = (createItems[i] \u0026\u0026 createItems[i].json) || {};\n  const docId = createJson.documentId;\n  if (docId) {\n    docUrlMap[String(splitJson.row_number)] = \u0027https://docs.google.com/document/d/\u0027 + docId + \u0027/edit\u0027;\n  }\n}\n\nreturn [{ json: { docUrlMap: docUrlMap, docCount: Object.keys(docUrlMap).length } }];"
+                                     },
+                      "id":  "280320d3-dc23-4390-aebe-bf514e7e2da6",
+                      "name":  "Collect Doc URLs",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       10976,
+                                       784
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "url":  "={{ \u0027https://docs.googleapis.com/v1/documents/\u0027 + $(\u0027Create Plan Doc\u0027).item.json.documentId }}",
+                                         "authentication":  "predefinedCredentialType",
+                                         "nodeCredentialType":  "googleSheetsOAuth2Api",
+                                         "options":  {
+                                                         "batching":  {
+                                                                          "batch":  {
+                                                                                        "batchSize":  2
+                                                                                    }
+                                                                      }
+                                                     }
+                                     },
+                      "id":  "6cc6bdff-30fc-4e15-81c3-f64c69b7492d",
+                      "name":  "Get Doc Structure",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       10080,
+                                       784
+                                   ],
+                      "credentials":  {
+                                          "googleSheetsOAuth2Api":  {
+                                                                        "id":  "",
+                                                                        "name":  null
+                                                                    }
+                                      },
+                      "onError":  "continueRegularOutput"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const docs = $input.all();\nconst splitItems = $(\u0027Split Scripts\u0027).all();\n\nfunction buildRequestsForDoc(doc, storyboard) {\n  let table = null;\n  if (doc \u0026\u0026 doc.body \u0026\u0026 Array.isArray(doc.body.content)) {\n    for (let i=0; i\u003cdoc.body.content.length; i++) {\n      if (doc.body.content[i].table) { table = doc.body.content[i].table; break; }\n    }\n  }\n  if (!table) return { requests: [], hasTable: false, cellCount: 0 };\n\n  const headers = [\u0027Durasi\u0027, \u0027Visual (Adegan)\u0027, \u0027Audio (Voiceover/Musik)\u0027, \u0027Text Over/Element\u0027];\n  const cellData = [headers];\n  (storyboard || []).forEach(function(scene){\n    cellData.push([\n      scene.durasi || \u0027\u0027,\n      scene.visual || \u0027\u0027,\n      scene.audio || \u0027\u0027,\n      scene.text_overlay || \u0027\u0027\n    ]);\n  });\n\n  const cellWrites = [];\n  (table.tableRows || []).forEach(function(row, rIdx){\n    (row.tableCells || []).forEach(function(cell, cIdx){\n      if (rIdx \u003e= cellData.length || cIdx \u003e= cellData[rIdx].length) return;\n      const text = cellData[rIdx][cIdx];\n      if (!text) return;\n      const para = cell.content \u0026\u0026 cell.content[0];\n      if (!para) return;\n      const startIndex = para.startIndex;\n      if (typeof startIndex !== \u0027number\u0027) return;\n      cellWrites.push({ startIndex: startIndex, text: text });\n    });\n  });\n\n  cellWrites.sort(function(a,b){ return b.startIndex - a.startIndex; });\n  const requests = cellWrites.map(function(w){\n    return { insertText: { location: { index: w.startIndex }, text: w.text } };\n  });\n  return { requests: requests, hasTable: true, cellCount: cellWrites.length };\n}\n\nreturn docs.map(function(docItem, idx){\n  const doc = docItem.json;\n  const split = splitItems[idx] \u0026\u0026 splitItems[idx].json;\n  const storyboard = split ? (split.storyboard || []) : [];\n  const result = buildRequestsForDoc(doc, storyboard);\n  return { json: result, pairedItem: { item: idx } };\n});"
+                                     },
+                      "id":  "d5e20bee-5b9e-48a1-b181-852a274b7e34",
+                      "name":  "Build Populate Requests",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       10304,
+                                       784
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ \u0027https://docs.googleapis.com/v1/documents/\u0027 + $(\u0027Create Plan Doc\u0027).item.json.documentId + \u0027:batchUpdate\u0027 }}",
+                                         "authentication":  "predefinedCredentialType",
+                                         "nodeCredentialType":  "googleSheetsOAuth2Api",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ requests: $json.requests }) }}",
+                                         "options":  {
+                                                         "batching":  {
+                                                                          "batch":  {
+                                                                                        "batchSize":  2
+                                                                                    }
+                                                                      }
+                                                     }
+                                     },
+                      "id":  "ac4b569e-4e7e-4042-b73d-f14407971a73",
+                      "name":  "Populate Cells",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       10528,
+                                       784
+                                   ],
+                      "credentials":  {
+                                          "googleSheetsOAuth2Api":  {
+                                                                        "id":  "",
+                                                                        "name":  null
+                                                                    }
+                                      },
+                      "onError":  "continueRegularOutput"
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ \u0027https://api.telegram.org/bot\u0027 + \u0027YOUR_TELEGRAM_BOT_TOKEN\u0027 + \u0027/editMessageText\u0027 }}",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ chat_id: $(\u0027Normalize Input\u0027).item.json.chatId, message_id: $(\u0027Send Loading\u0027).item.json.message_id, text: \u0027✅ Step 1/3 — Content plan siap (\u0027 + ($(\u0027Parse Plan\u0027).item.json._itemCount || 0) + \u0027 konten)\\n\\n⏳ Step 2/3 — Lagi generate \u0027 + ($(\u0027Parse Plan\u0027).item.json._itemCount || 0) + \u0027 skrip via AI...\u0027, parse_mode: \u0027HTML\u0027 }) }}",
+                                         "options":  {
+                                                         "timeout":  5000
+                                                     }
+                                     },
+                      "id":  "59c65cee-cd1e-4564-814c-b92c5136c1ae",
+                      "name":  "Progress: Plan Ready",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       8064,
+                                       688
+                                   ],
+                      "onError":  "continueRegularOutput"
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ \u0027https://api.telegram.org/bot\u0027 + \u0027YOUR_TELEGRAM_BOT_TOKEN\u0027 + \u0027/editMessageText\u0027 }}",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ chat_id: $(\u0027Normalize Input\u0027).item.json.chatId, message_id: $(\u0027Send Loading\u0027).item.json.message_id, text: \u0027✅ Step 1/3 — Content plan siap\\n✅ Step 2/3 — \u0027 + ($(\u0027Aggregate Scripts\u0027).item.json.scriptCount || 0) + \u0027 skrip generated\\n\\n⏳ Step 3/3 — Lagi bikin \u0027 + ($(\u0027Aggregate Scripts\u0027).item.json.scriptCount || 0) + \u0027 Google Docs + spreadsheet...\u0027, parse_mode: \u0027HTML\u0027 }) }}",
+                                         "options":  {
+                                                         "timeout":  5000
+                                                     }
+                                     },
+                      "id":  "466eae8c-8c74-4776-abbc-e399c1cc2cbf",
+                      "name":  "Progress: Scripts Ready",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       9408,
+                                       976
+                                   ],
+                      "onError":  "continueRegularOutput"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const expected = \u0027YOUR_INTERNAL_SECRET\u0027;\nconst headers = $json.headers || {};\nconst got = headers[\u0027x-internal-secret\u0027] || headers[\u0027X-Internal-Secret\u0027];\nif (got !== expected) {\n  throw new Error(\u0027Unauthorized: invalid or missing x-internal-secret header\u0027);\n}\nreturn $input.all();"
+                                     },
+                      "id":  "20456572-97a7-405d-a8a6-6e63fbe9e340",
+                      "name":  "Verify Secret",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       6496,
+                                       688
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "caseSensitive":  true,
+                                                                            "leftValue":  "",
+                                                                            "typeValidation":  "loose",
+                                                                            "version":  1
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "has-product",
+                                                                                   "leftValue":  "={{ $json.id }}",
+                                                                                   "rightValue":  "",
+                                                                                   "operator":  {
+                                                                                                    "type":  "string",
+                                                                                                    "operation":  "notEmpty",
+                                                                                                    "singleValue":  true
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "b1c2e3d4-0006-4a06-9f06-000000000006",
+                      "name":  "Has Product?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2,
+                      "position":  [
+                                       7168,
+                                       600
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ \u0027https://api.telegram.org/bot\u0027 + \u0027YOUR_TELEGRAM_BOT_TOKEN\u0027 + \u0027/sendMessage\u0027 }}",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ chat_id: $(\u0027Normalize Input\u0027).item.json.chatId, text: \u0027Kamu belum punya produk yang dianalisis. Kirim foto produk + caption /analyze dulu, lalu ketik /create lagi ya!\u0027, parse_mode: \u0027HTML\u0027 }) }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "c1c2e3d4-0007-4a07-9f07-000000000007",
+                      "name":  "Ask Analyze First",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       7392,
+                                       600
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Normalize Input":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Send Loading",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 },
+                                                                 {
+                                                                     "node":  "Get Latest Product",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Get Latest Product":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Has Product?",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Get Top Keywords":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Build AI Prompt",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Build AI Prompt":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Generate Plan with AI",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Generate Plan with AI":  {
+                                                      "main":  [
+                                                                   [
+                                                                       {
+                                                                           "node":  "Parse Plan",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       }
+                                                                   ]
+                                                               ]
+                                                  },
+                        "Parse Plan":  {
+                                           "main":  [
+                                                        [
+                                                            {
+                                                                "node":  "Create Plan Record",
+                                                                "type":  "main",
+                                                                "index":  0
+                                                            },
+                                                            {
+                                                                "node":  "Progress: Plan Ready",
+                                                                "type":  "main",
+                                                                "index":  0
+                                                            }
+                                                        ]
+                                                    ]
+                                       },
+                        "Create Plan Record":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Prepare Content Items",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Prepare Content Items":  {
+                                                      "main":  [
+                                                                   [
+                                                                       {
+                                                                           "node":  "Insert Content Items",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       }
+                                                                   ]
+                                                               ]
+                                                  },
+                        "Build Sheet Data":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Create Google Spreadsheet",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Make Spreadsheet Public":  {
+                                                        "main":  [
+                                                                     [
+                                                                         {
+                                                                             "node":  "Update Plan URL",
+                                                                             "type":  "main",
+                                                                             "index":  0
+                                                                         }
+                                                                     ]
+                                                                 ]
+                                                    },
+                        "Update Plan URL":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Send Result",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Populate Spreadsheet":  {
+                                                     "main":  [
+                                                                  [
+                                                                      {
+                                                                          "node":  "Format Spreadsheet",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                              ]
+                                                 },
+                        "Format Spreadsheet":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Make Spreadsheet Public",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Insert Content Items":  {
+                                                     "main":  [
+                                                                  [
+                                                                      {
+                                                                          "node":  "Build Script Prompts",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                              ]
+                                                 },
+                        "Build Script Prompts":  {
+                                                     "main":  [
+                                                                  [
+                                                                      {
+                                                                          "node":  "Generate Script with AI",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                              ]
+                                                 },
+                        "Generate Script with AI":  {
+                                                        "main":  [
+                                                                     [
+                                                                         {
+                                                                             "node":  "Aggregate Scripts",
+                                                                             "type":  "main",
+                                                                             "index":  0
+                                                                         }
+                                                                     ]
+                                                                 ]
+                                                    },
+                        "Create Plan Doc":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Insert Doc Content",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Create Google Spreadsheet":  {
+                                                          "main":  [
+                                                                       [
+                                                                           {
+                                                                               "node":  "Populate Spreadsheet",
+                                                                               "type":  "main",
+                                                                               "index":  0
+                                                                           }
+                                                                       ]
+                                                                   ]
+                                                      },
+                        "Aggregate Scripts":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Split Scripts",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   },
+                                                                   {
+                                                                       "node":  "Progress: Scripts Ready",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "Split Scripts":  {
+                                              "main":  [
+                                                           [
+                                                               {
+                                                                   "node":  "Create Plan Doc",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                                       ]
+                                          },
+                        "Make Doc Public":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Collect Doc URLs",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Collect Doc URLs":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Build Sheet Data",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Insert Doc Content":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Get Doc Structure",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Get Doc Structure":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Build Populate Requests",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "Build Populate Requests":  {
+                                                        "main":  [
+                                                                     [
+                                                                         {
+                                                                             "node":  "Populate Cells",
+                                                                             "type":  "main",
+                                                                             "index":  0
+                                                                         }
+                                                                     ]
+                                                                 ]
+                                                    },
+                        "Populate Cells":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Make Doc Public",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           },
+                        "Webhook Trigger":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Verify Secret",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Verify Secret":  {
+                                              "main":  [
+                                                           [
+                                                               {
+                                                                   "node":  "Normalize Input",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                                       ]
+                                          },
+                        "Has Product?":  {
+                                             "main":  [
+                                                          [
+                                                              {
+                                                                  "node":  "Get Top Keywords",
+                                                                  "type":  "main",
+                                                                  "index":  0
+                                                              }
+                                                          ],
+                                                          [
+                                                              {
+                                                                  "node":  "Ask Analyze First",
+                                                                  "type":  "main",
+                                                                  "index":  0
+                                                              }
+                                                          ]
+                                                      ]
+                                         }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false,
+                     "binaryMode":  "separate"
+                 }
 }

@@ -1,150 +1,396 @@
-{
-  "name": "WF-02 Product Analyzer",
-  "nodes": [
-    {
-      "parameters": {
-        "httpMethod": "POST",
-        "path": "analyze-product",
-        "responseMode": "responseNode",
-        "options": {}
-      },
-      "id": "webhook-trigger",
-      "name": "Webhook Trigger",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [240, 300]
-    },
-    {
-      "parameters": {
-        "chatId": "={{ $json.chatId }}",
-        "text": "⏳ Menganalisis produk... mohon tunggu sebentar!",
-        "additionalFields": {}
-      },
-      "id": "send-loading",
-      "name": "Send Loading Message",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [460, 200],
-      "credentials": { "telegramApi": { "id": "1", "name": "Telegram Bot" } }
-    },
-    {
-      "parameters": {
-        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/getFile",
-        "sendQuery": true,
-        "queryParameters": { "parameters": [{ "name": "file_id", "value": "={{ $json.photoFileId }}" }] },
-        "options": {}
-      },
-      "id": "get-file-path",
-      "name": "Get Telegram File Path",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [460, 400]
-    },
-    {
-      "parameters": {
-        "url": "=https://api.telegram.org/file/bot{{ $env.TELEGRAM_BOT_TOKEN }}/{{ $json.result.file_path }}",
-        "options": { "response": { "response": { "responseFormat": "file" } } }
-      },
-      "id": "download-photo",
-      "name": "Download Photo",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [680, 400]
-    },
-    {
-      "parameters": {
-        "operation": "upload",
-        "bucketName": "product-images",
-        "fileName": "={{ $('Webhook Trigger').item.json.userId }}/{{ $now.toMillis() }}.jpg",
-        "fileContent": "={{ $binary.data }}"
-      },
-      "id": "upload-to-supabase",
-      "name": "Upload to Supabase Storage",
-      "type": "n8n-nodes-base.supabase",
-      "typeVersion": 1,
-      "position": [900, 400],
-      "credentials": { "supabaseApi": { "id": "3", "name": "Supabase" } }
-    },
-    {
-      "parameters": {
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "HTTP-Referer", "value": "https://mr-planer.vercel.app" },
-            { "name": "X-Title", "value": "MR. PLANER" }
-          ]
-        },
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [{
-            "name": "=",
-            "value": "={{ JSON.stringify({ model: 'google/gemini-2.0-flash', messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: $('Upload to Supabase Storage').item.json.publicUrl } }, { type: 'text', text: 'Kamu adalah AI product analyst untuk affiliator TikTok Indonesia. Analisis gambar produk ini dan berikan output JSON: { \"name\": \"nama produk\", \"selling_points\": [\"...\"], \"target_market\": \"...\", \"use_cases\": [\"...\"] }. Gunakan bahasa Indonesia.' }] }], temperature: 0.7, max_tokens: 1024 }) }}"
-          }]
-        },
-        "options": {}
-      },
-      "id": "call-openrouter",
-      "name": "Analyze with OpenRouter",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [1120, 400],
-      "credentials": { "httpHeaderAuth": { "id": "4", "name": "OpenRouter API" } }
-    },
-    {
-      "parameters": {
-        "jsCode": "const raw = $json.choices[0].message.content;\nlet parsed;\ntry {\n  parsed = JSON.parse(raw.replace(/```json\\n?|\\n?```/g, '').trim());\n} catch(e) {\n  parsed = { name: 'Produk', selling_points: [], target_market: '', use_cases: [] };\n}\nreturn [{ json: { ...parsed, imageUrl: $('Upload to Supabase Storage').item.json.publicUrl } }];"
-      },
-      "id": "parse-ai-response",
-      "name": "Parse AI Response",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1340, 400]
-    },
-    {
-      "parameters": {
-        "operation": "insert",
-        "schema": "public",
-        "table": "products",
-        "columns": "user_id, name, description, image_url, selling_points, target_market",
-        "options": { "returnFields": "id, name" }
-      },
-      "id": "save-product",
-      "name": "Save Product to DB",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [1560, 400],
-      "credentials": { "postgres": { "id": "2", "name": "Supabase DB" } }
-    },
-    {
-      "parameters": {
-        "chatId": "={{ $('Webhook Trigger').item.json.chatId }}",
-        "text": "=✅ *Analisis Produk Selesai!*\n\n📦 *Nama Produk:* {{ $('Parse AI Response').item.json.name }}\n\n💡 *Selling Points:*\n{{ $('Parse AI Response').item.json.selling_points.map((s, i) => `${i+1}. ${s}`).join('\\n') }}\n\n🎯 *Target Market:* {{ $('Parse AI Response').item.json.target_market }}\n\n📌 Produk telah disimpan! Ketik /create untuk membuat content plan.",
-        "additionalFields": { "parse_mode": "Markdown" }
-      },
-      "id": "send-result",
-      "name": "Send Analysis Result",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [1780, 400],
-      "credentials": { "telegramApi": { "id": "1", "name": "Telegram Bot" } }
-    }
-  ],
-  "connections": {
-    "Webhook Trigger": {
-      "main": [[
-        { "node": "Send Loading Message", "type": "main", "index": 0 },
-        { "node": "Get Telegram File Path", "type": "main", "index": 0 }
-      ]]
-    },
-    "Get Telegram File Path": { "main": [[{ "node": "Download Photo", "type": "main", "index": 0 }]] },
-    "Download Photo": { "main": [[{ "node": "Upload to Supabase Storage", "type": "main", "index": 0 }]] },
-    "Upload to Supabase Storage": { "main": [[{ "node": "Analyze with OpenRouter", "type": "main", "index": 0 }]] },
-    "Analyze with OpenRouter": { "main": [[{ "node": "Parse AI Response", "type": "main", "index": 0 }]] },
-    "Parse AI Response": { "main": [[{ "node": "Save Product to DB", "type": "main", "index": 0 }]] },
-    "Save Product to DB": { "main": [[{ "node": "Send Analysis Result", "type": "main", "index": 0 }]] }
-  },
-  "settings": { "executionOrder": "v1" }
+﻿{
+    "name":  "WF-02 Product Analyzer",
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "analyze-product",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "dbedff1b-35a7-40b6-aed2-15906aeaca7b",
+                      "name":  "Webhook Trigger",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1392,
+                                       512
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const expected = 'YOUR_INTERNAL_SECRET';\nconst headers = $json.headers || {};\nconst got = headers[\u0027x-internal-secret\u0027] || headers[\u0027X-Internal-Secret\u0027];\nif (got !== expected) {\n  throw new Error(\u0027Unauthorized: invalid or missing x-internal-secret header\u0027);\n}\nreturn $input.all();"
+                                     },
+                      "id":  "a1c2e3d4-0002-4a02-9f02-000000000002",
+                      "name":  "Verify Secret",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1504,
+                                       512
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "// Webhook body arrives as $json.body.* — unwrap to $json.*\nconst data = $json.body || $json;\nreturn [{ json: data }];"
+                                     },
+                      "id":  "f55a1cac-aecc-44a7-b8f0-56b60d986dad",
+                      "name":  "Normalize Input",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1616,
+                                       512
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "chatId":  "={{ $json.chatId }}",
+                                         "text":  "⏳ Menganalisis produk... mohon tunggu sebentar!",
+                                         "additionalFields":  {
+                                                                  "appendAttribution":  false
+                                                              },
+                                         "resource":  "message",
+                                         "operation":  "sendMessage"
+                                     },
+                      "id":  "43b787d4-3b90-481d-8c90-e2ef74479fcf",
+                      "name":  "Send Loading Message",
+                      "type":  "n8n-nodes-base.telegram",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       1840,
+                                       416
+                                   ],
+                      "credentials":  {
+                                          "telegramApi":  {
+                                                              "id":  "",
+                                                              "name":  "Telegram Bot"
+                                                          }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "url":  "={{ \u0027https://api.telegram.org/bot\u0027 + 'YOUR_TELEGRAM_BOT_TOKEN' + \u0027/getFile\u0027 }}",
+                                         "sendQuery":  true,
+                                         "queryParameters":  {
+                                                                 "parameters":  [
+                                                                                    {
+                                                                                        "name":  "file_id",
+                                                                                        "value":  "={{ $json.photoFileId }}"
+                                                                                    }
+                                                                                ]
+                                                             },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "e45b19ae-ae38-4276-b695-804631c83e7b",
+                      "name":  "Get Telegram File Path",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       1840,
+                                       608
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "assignments":  {
+                                                             "assignments":  [
+                                                                                 {
+                                                                                     "id":  "u1",
+                                                                                     "name":  "imageUrl",
+                                                                                     "value":  "={{ \u0027https://api.telegram.org/file/bot\u0027 + 'YOUR_TELEGRAM_BOT_TOKEN' + \u0027/\u0027 + $json.result.file_path }}",
+                                                                                     "type":  "string"
+                                                                                 },
+                                                                                 {
+                                                                                     "id":  "u2",
+                                                                                     "name":  "chatId",
+                                                                                     "value":  "={{ String($(\u0027Normalize Input\u0027).item.json.chatId) }}",
+                                                                                     "type":  "string"
+                                                                                 },
+                                                                                 {
+                                                                                     "id":  "u3",
+                                                                                     "name":  "telegramUserId",
+                                                                                     "value":  "={{ String($(\u0027Normalize Input\u0027).item.json.telegramUserId) }}",
+                                                                                     "type":  "string"
+                                                                                 },
+                                                                                 {
+                                                                                     "id":  "u4",
+                                                                                     "name":  "dbUserId",
+                                                                                     "value":  "={{ $(\u0027Normalize Input\u0027).item.json.dbUserId }}",
+                                                                                     "type":  "string"
+                                                                                 },
+                                                                                 {
+                                                                                     "id":  "u5",
+                                                                                     "name":  "description",
+                                                                                     "value":  "={{ $(\u0027Normalize Input\u0027).item.json.description || \u0027\u0027 }}",
+                                                                                     "type":  "string"
+                                                                                 }
+                                                                             ]
+                                                         },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "5f02874f-cb24-4642-a7d2-55e85b9db8ee",
+                      "name":  "Build Telegram URL",
+                      "type":  "n8n-nodes-base.set",
+                      "typeVersion":  3.4,
+                      "position":  [
+                                       2064,
+                                       608
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://api.groq.com/openai/v1/chat/completions",
+                                         "authentication":  "genericCredentialType",
+                                         "genericAuthType":  "httpHeaderAuth",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ model: \u0027meta-llama/llama-4-scout-17b-16e-instruct\u0027, messages: [{ role: \u0027user\u0027, content: [{ type: \u0027image_url\u0027, image_url: { url: $json.imageUrl } }, { type: \u0027text\u0027, text: \u0027Kamu adalah AI product analyst untuk affiliator TikTok Indonesia. Analisis gambar produk ini.\\n\\nINSTRUKSI KETAT:\\n- Output HANYA berupa JSON valid, TANPA kalimat pembuka, TANPA penjelasan, TANPA markdown code fences.\\n- Mulai response langsung dengan { dan akhiri dengan }.\\n- Gunakan bahasa Indonesia untuk semua value.\\n\\nFormat output:\\n{\"name\":\"nama produk lengkap (brand + tipe)\",\"selling_points\":[\"keunggulan 1\",\"keunggulan 2\",\"keunggulan 3\",\"keunggulan 4\",\"keunggulan 5\"],\"target_market\":\"deskripsi target market/pembeli\",\"use_cases\":[\"use case 1\",\"use case 2\",\"use case 3\"]}\u0027 }] }], temperature: 0.5, max_tokens: 1024 }) }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "226ae95a-280e-4da1-844d-d92070cc88f3",
+                      "name":  "Analyze with Groq",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       2288,
+                                       608
+                                   ],
+                      "credentials":  {
+                                          "httpHeaderAuth":  {
+                                                                 "id":  "",
+                                                                 "name":  "Groq API"
+                                                             }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "function extractJSON(raw) {\n  if (!raw) return null;\n  let s = String(raw).replace(/```json/gi, \u0027\u0027).replace(/```/g, \u0027\u0027).trim();\n  const firstBrace = s.indexOf(\u0027{\u0027);\n  if (firstBrace === -1) return null;\n  let depth = 0, end = -1, inString = false, escape = false;\n  for (let i = firstBrace; i \u003c s.length; i++) {\n    const ch = s[i];\n    if (escape) { escape = false; continue; }\n    if (ch === \u0027\\\\\u0027) { escape = true; continue; }\n    if (ch === \u0027\"\u0027) { inString = !inString; continue; }\n    if (inString) continue;\n    if (ch === \u0027{\u0027) depth++;\n    else if (ch === \u0027}\u0027) { depth--; if (depth === 0) { end = i; break; } }\n  }\n  if (end === -1) return null;\n  try { return JSON.parse(s.slice(firstBrace, end + 1)); } catch(e) { return null; }\n}\n\nconst raw = ($json.choices \u0026\u0026 $json.choices[0] \u0026\u0026 $json.choices[0].message \u0026\u0026 $json.choices[0].message.content)\n  ? $json.choices[0].message.content : \u0027\u0027;\n\nconst parsed = extractJSON(raw) || { name: \u0027Produk\u0027, selling_points: [], target_market: \u0027\u0027, use_cases: [] };\n\nconst btu = $(\u0027Build Telegram URL\u0027).item.json;\nconst chatId = String(btu.chatId || \u0027\u0027);\n\nreturn [{ json: {\n  name: parsed.name || \u0027Produk\u0027,\n  description: btu.description || \u0027\u0027,\n  image_url: btu.imageUrl || \u0027\u0027,\n  selling_points: Array.isArray(parsed.selling_points) ? parsed.selling_points : [],\n  target_market: parsed.target_market || \u0027\u0027,\n  use_cases: Array.isArray(parsed.use_cases) ? parsed.use_cases : [],\n  user_id: btu.dbUserId,\n  chatId: chatId,\n  telegramUserId: btu.telegramUserId,\n  _rawAI: String(raw).substring(0, 500)\n}}];"
+                                     },
+                      "id":  "3946c9e3-56df-4cf3-bc73-9d6e99822494",
+                      "name":  "Parse AI Response",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       2512,
+                                       608
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "function esc(v){ return String(v||\"\").replace(/\u0027/g, \"\u0027\u0027\"); }\n\nconst j = $json;\n\nconst chatId = String(j.chatId || \"\");\nif (!chatId) throw new Error(\u0027chatId kosong di Prepare SQL! Cek input webhook.\u0027);\n\nconst sp = JSON.stringify(Array.isArray(j.selling_points) ? j.selling_points : []);\n\nconst sql = \"INSERT INTO public.products (user_id, name, description, image_url, selling_points, target_market) VALUES (\u0027\" +\n  esc(j.user_id) + \"\u0027, \u0027\" + esc(j.name) + \"\u0027, \u0027\" + esc(j.description) + \"\u0027, \u0027\" +\n  esc(j.image_url) + \"\u0027, \u0027\" + esc(sp) + \"\u0027, \u0027\" + esc(j.target_market) +\n\"\u0027) RETURNING id, name\";\n\nconst spLines = (j.selling_points || []).slice(0, 3)\n  .map(function(s, i) { return (i + 1) + \u0027. \u0027 + String(s).substring(0, 80); })\n  .join(\u0027\\n\u0027);\n\nconst telegramMessage =\n  \u0027\\u2705 Analisis Produk Selesai!\\n\\n\u0027 +\n  \u0027\\ud83d\\udce6 Produk: \u0027 + (j.name || \u0027-\u0027) + \u0027\\n\\n\u0027 +\n  \u0027\\ud83c\\udfaf Target Market: \u0027 + (j.target_market || \u0027-\u0027) + \u0027\\n\\n\u0027 +\n  \u0027\\u2b50 Selling Points:\\n\u0027 + (spLines || \u0027-\u0027) + \u0027\\n\\n\u0027 +\n  \u0027Ketik /create untuk buat content plan!\u0027;\n\nreturn [{ json: { ...j, chatId, sql, telegramMessage } }];"
+                                     },
+                      "id":  "4f43814c-c3fb-4843-bce9-966574d2edff",
+                      "name":  "Prepare SQL",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       2736,
+                                       608
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "={{ $json.sql }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "1a7bbfc1-df32-4ab3-ac8c-f8905e06a29a",
+                      "name":  "Save Product to DB",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       2960,
+                                       608
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "",
+                                                           "name":  "Supabase DB (Telegram)"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "chatId":  "={{ $(\u0027Prepare SQL\u0027).item.json.chatId }}",
+                                         "text":  "={{ $(\u0027Prepare SQL\u0027).item.json.telegramMessage }}",
+                                         "additionalFields":  {
+                                                                  "appendAttribution":  false
+                                                              },
+                                         "resource":  "message",
+                                         "operation":  "sendMessage"
+                                     },
+                      "id":  "17d13661-fe88-491b-853b-41ef2895384a",
+                      "name":  "Send Analysis Result",
+                      "type":  "n8n-nodes-base.telegram",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       3184,
+                                       608
+                                   ],
+                      "credentials":  {
+                                          "telegramApi":  {
+                                                              "id":  "",
+                                                              "name":  "Telegram Bot"
+                                                          }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ 'https://n8n.example.com' }}/webhook/generate-keywords",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "x-internal-secret",
+                                                                                         "value":  "={{ 'YOUR_INTERNAL_SECRET' }}"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ productId: $json.id }) }}",
+                                         "options":  {
+                                                         "timeout":  5000
+                                                     }
+                                     },
+                      "id":  "f6d8088f-1aed-4b38-a8c3-e6573121b743",
+                      "name":  "Trigger Keyword Generation",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       3184,
+                                       800
+                                   ],
+                      "onError":  "continueRegularOutput"
+                  }
+              ],
+    "connections":  {
+                        "Webhook Trigger":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Verify Secret",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Verify Secret":  {
+                                              "main":  [
+                                                           [
+                                                               {
+                                                                   "node":  "Normalize Input",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                                       ]
+                                          },
+                        "Normalize Input":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Send Loading Message",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 },
+                                                                 {
+                                                                     "node":  "Get Telegram File Path",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Get Telegram File Path":  {
+                                                       "main":  [
+                                                                    [
+                                                                        {
+                                                                            "node":  "Build Telegram URL",
+                                                                            "type":  "main",
+                                                                            "index":  0
+                                                                        }
+                                                                    ]
+                                                                ]
+                                                   },
+                        "Build Telegram URL":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Analyze with Groq",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Analyze with Groq":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Parse AI Response",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "Parse AI Response":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Prepare SQL",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "Prepare SQL":  {
+                                            "main":  [
+                                                         [
+                                                             {
+                                                                 "node":  "Save Product to DB",
+                                                                 "type":  "main",
+                                                                 "index":  0
+                                                             }
+                                                         ]
+                                                     ]
+                                        },
+                        "Save Product to DB":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Send Analysis Result",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    },
+                                                                    {
+                                                                        "node":  "Trigger Keyword Generation",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false,
+                     "binaryMode":  "separate"
+                 }
 }

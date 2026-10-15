@@ -1,50 +1,13 @@
-# Environment files (NEVER commit secrets)
+# Environment variables (JANGAN commit secrets!)
 .env
-.env.*
-!.env.example
-!.env.local.example
+.env.local
+.env.*.local
 
-# Dependencies
-node_modules/
-.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
-
-# Next.js build output
-.next/
-out/
-build/
-dist/
-
-# Logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
-# IDE / OS
+# OS files
 .DS_Store
+Thumbs.db
+
+# Editor
 .vscode/
 .idea/
 *.swp
-Thumbs.db
-
-# Claude / Superpowers session state
-.superpowers/
-.claude/
-
-# TypeScript
-*.tsbuildinfo
-next-env.d.ts
-
-# Testing
-coverage/
-
-# Temp files
-*.tmp
-*.bak

@@ -1,134 +1,600 @@
-{
-  "name": "WF-01 Telegram Bot Router",
-  "nodes": [
-    {
-      "parameters": {
-        "updates": ["message"],
-        "additionalFields": {}
-      },
-      "id": "telegram-trigger",
-      "name": "Telegram Trigger",
-      "type": "n8n-nodes-base.telegramTrigger",
-      "typeVersion": 1.1,
-      "position": [240, 300],
-      "credentials": { "telegramApi": { "id": "1", "name": "Telegram Bot" } }
-    },
-    {
-      "parameters": {
-        "jsCode": "const msg = $json.message;\nconst text = msg?.text || '';\nconst chatId = msg?.chat?.id;\nconst userId = msg?.from?.id;\nconst username = msg?.from?.username || msg?.from?.first_name || 'User';\nconst photo = msg?.photo;\n\nconst command = text.startsWith('/') ? text.split(' ')[0].split('@')[0] : null;\nconst args = text.startsWith('/') ? text.split(' ').slice(1).join(' ') : text;\n\nreturn [{\n  json: {\n    chatId, userId, username, text, command, args, photo,\n    hasPhoto: !!photo,\n    raw: $json\n  }\n}];"
-      },
-      "id": "parse-message",
-      "name": "Parse Message",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [460, 300]
-    },
-    {
-      "parameters": {
-        "operation": "select",
-        "schema": "public",
-        "table": "users",
-        "filters": {
-          "conditions": [{ "keyName": "telegram_id", "condition": "equal", "keyValue": "={{ $json.userId }}" }]
-        },
-        "options": { "limit": 1 }
-      },
-      "id": "find-user",
-      "name": "Find User in DB",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [680, 300],
-      "credentials": { "postgres": { "id": "2", "name": "Supabase DB" } }
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "number": [{ "value1": "={{ $json.id ? 1 : 0 }}", "operation": "equal", "value2": 0 }]
-        }
-      },
-      "id": "user-exists",
-      "name": "User Exists?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [900, 300]
-    },
-    {
-      "parameters": {
-        "operation": "insert",
-        "schema": "public",
-        "table": "users",
-        "columns": "telegram_id, full_name",
-        "options": {}
-      },
-      "id": "create-user",
-      "name": "Create New User",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [1100, 200],
-      "credentials": { "postgres": { "id": "2", "name": "Supabase DB" } }
-    },
-    {
-      "parameters": {
-        "rules": {
-          "rules": [
-            { "conditions": { "string": [{ "value1": "={{ $('Parse Message').item.json.command }}", "operation": "equal", "value2": "/start" }] }, "renameOutput": true, "outputKey": "start" },
-            { "conditions": { "string": [{ "value1": "={{ $('Parse Message').item.json.command }}", "operation": "equal", "value2": "/analyze" }] }, "renameOutput": true, "outputKey": "analyze" },
-            { "conditions": { "string": [{ "value1": "={{ $('Parse Message').item.json.command }}", "operation": "equal", "value2": "/create" }] }, "renameOutput": true, "outputKey": "create" },
-            { "conditions": { "string": [{ "value1": "={{ $('Parse Message').item.json.command }}", "operation": "equal", "value2": "/script" }] }, "renameOutput": true, "outputKey": "script" },
-            { "conditions": { "string": [{ "value1": "={{ $('Parse Message').item.json.command }}", "operation": "equal", "value2": "/history" }] }, "renameOutput": true, "outputKey": "history" }
-          ]
-        },
-        "fallbackOutput": "extra"
-      },
-      "id": "router",
-      "name": "Command Router",
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3,
-      "position": [1300, 300]
-    },
-    {
-      "parameters": {
-        "chatId": "={{ $('Parse Message').item.json.chatId }}",
-        "text": "Halo *{{ $('Parse Message').item.json.username }}*! 👋\n\nSelamat datang di *MR. PLANER* — AI Content Planner untuk TikTok Affiliator!\n\n✨ *Cara Pakai:*\n📸 /analyze — Analisis produk (kirim foto + command)\n📅 /create — Buat content plan 7 atau 30 hari\n📝 /script [nomor] — Generate script untuk konten tertentu\n📊 /history — Lihat riwayat content plan\n❓ /help — Bantuan\n\nMulai dengan kirim foto produk + /analyze!",
-        "additionalFields": { "parse_mode": "Markdown" }
-      },
-      "id": "send-start",
-      "name": "Send Start Message",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [1520, 100],
-      "credentials": { "telegramApi": { "id": "1", "name": "Telegram Bot" } }
-    },
-    {
-      "parameters": {
-        "chatId": "={{ $('Parse Message').item.json.chatId }}",
-        "text": "❓ *Tidak mengerti perintah itu.*\n\nGunakan:\n• /analyze — Analisis produk\n• /create — Buat content plan\n• /script [nomor] — Generate script\n• /history — Riwayat\n• /help — Bantuan",
-        "additionalFields": { "parse_mode": "Markdown" }
-      },
-      "id": "send-unknown",
-      "name": "Send Unknown Command",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [1520, 500],
-      "credentials": { "telegramApi": { "id": "1", "name": "Telegram Bot" } }
-    }
-  ],
-  "connections": {
-    "Telegram Trigger": { "main": [[{ "node": "Parse Message", "type": "main", "index": 0 }]] },
-    "Parse Message": { "main": [[{ "node": "Find User in DB", "type": "main", "index": 0 }]] },
-    "Find User in DB": { "main": [[{ "node": "User Exists?", "type": "main", "index": 0 }]] },
-    "User Exists?": {
-      "main": [
-        [{ "node": "Create New User", "type": "main", "index": 0 }],
-        [{ "node": "Command Router", "type": "main", "index": 0 }]
-      ]
-    },
-    "Create New User": { "main": [[{ "node": "Command Router", "type": "main", "index": 0 }]] },
-    "Command Router": {
-      "start": [{ "node": "Send Start Message", "type": "main", "index": 0 }],
-      "extra": [{ "node": "Send Unknown Command", "type": "main", "index": 0 }]
-    }
-  },
-  "settings": { "executionOrder": "v1" },
-  "meta": { "templateId": "mr-planer-wf-01" }
+﻿{
+    "name":  "WF-01 Telegram Bot Router",
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "updates":  [
+                                                         "message",
+                                                         "callback_query"
+                                                     ],
+                                         "additionalFields":  {
+                                                                  "download":  false
+                                                              }
+                                     },
+                      "id":  "telegram-trigger",
+                      "name":  "Telegram Trigger",
+                      "type":  "n8n-nodes-base.telegramTrigger",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       240,
+                                       416
+                                   ],
+                      "webhookId":  "61f09935-2399-4797-954a-fcef07479cda",
+                      "credentials":  {
+                                          "telegramApi":  {
+                                                              "id":  "",
+                                                              "name":  "Telegram Bot"
+                                                          }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const msg = $json.message;\nconst callbackQuery = $json.callback_query;\n\nlet chatId, userId, username, text, photo, command, args;\nlet isCallback = false;\nlet callbackData = null;\nlet callbackQueryId = null;\nlet durationDays = 7;\nlet rowNumber = 1;\n\nif (callbackQuery) {\n  isCallback = true;\n  callbackData = callbackQuery.data || \u0027\u0027;\n  callbackQueryId = callbackQuery.id;\n  chatId = callbackQuery.message \u0026\u0026 callbackQuery.message.chat ? callbackQuery.message.chat.id : null;\n  userId = callbackQuery.from ? callbackQuery.from.id : null;\n  username = (callbackQuery.from \u0026\u0026 (callbackQuery.from.username || callbackQuery.from.first_name)) || \u0027User\u0027;\n  text = \u0027\u0027;\n  photo = null;\n  command = null;\n  args = \u0027\u0027;\n  if (callbackData.indexOf(\u0027plan_\u0027) === 0) {\n    command = \u0027__callback_plan__\u0027;\n    const n = parseInt(callbackData.replace(\u0027plan_\u0027, \u0027\u0027), 10);\n    if (n === 7 || n === 30) durationDays = n;\n  } else if (callbackData === \u0027show_history\u0027) {\n    command = \u0027/history\u0027;\n  } else if (callbackData === \u0027show_analyze_help\u0027) {\n    command = \u0027/analyze\u0027;\n  }\n} else if (msg) {\n  text = msg.text || msg.caption || \u0027\u0027;\n  chatId = msg.chat \u0026\u0026 msg.chat.id;\n  userId = msg.from \u0026\u0026 msg.from.id;\n  username = (msg.from \u0026\u0026 (msg.from.username || msg.from.first_name)) || \u0027User\u0027;\n  photo = msg.photo;\n  command = (text.trim().split(/\\s+/).find(function(w){ return w.indexOf(\u0027/\u0027) === 0; }) || \u0027\u0027).split(\u0027@\u0027)[0] || null;\n  args = command ? text.trim().split(/\\s+/).filter(function(w){ return w.indexOf(\u0027/\u0027) !== 0; }).join(\u0027 \u0027).trim() : text;\n  if (command === \u0027/help\u0027 || command === \u0027/script\u0027 || command === \u0027/menu\u0027) command = \u0027/start\u0027;\n  if (command === \u0027/create\u0027) {\n    const argNum = parseInt(args, 10);\n    if (argNum === 7 || argNum === 30) durationDays = argNum;\n  }\n}\n\nreturn [{ json: { chatId, userId, username, text, command, args, photo, hasPhoto: !!(photo \u0026\u0026 photo.length \u003e 0), isCallback, callbackData, callbackQueryId, durationDays, rowNumber, raw: $json } }];"
+                                     },
+                      "id":  "parse-message",
+                      "name":  "Parse Message",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       464,
+                                       416
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "={{ \u0027INSERT INTO public.users (telegram_id, full_name) VALUES (\u0027 + $json.userId + \u0027, \u0027 + \"\u0027\" + String($json.username || \u0027\u0027).replace(/\u0027/g, \"\u0027\u0027\") + \"\u0027) ON CONFLICT (telegram_id) DO UPDATE SET full_name = COALESCE(EXCLUDED.full_name, public.users.full_name) RETURNING id, telegram_id, full_name, role, plan_type\" }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "upsert-user",
+                      "name":  "Upsert User",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       688,
+                                       416
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "",
+                                                           "name":  "Supabase DB (Telegram)"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "rules":  {
+                                                       "values":  [
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  true,
+                                                                                                             "leftValue":  "",
+                                                                                                             "typeValidation":  "loose",
+                                                                                                             "version":  1
+                                                                                                         },
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "leftValue":  "={{ $(\u0027Parse Message\u0027).item.json.command }}",
+                                                                                                                    "rightValue":  "/start",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ],
+                                                                                             "combinator":  "and"
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "start"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  true,
+                                                                                                             "leftValue":  "",
+                                                                                                             "typeValidation":  "loose",
+                                                                                                             "version":  1
+                                                                                                         },
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "leftValue":  "={{ $(\u0027Parse Message\u0027).item.json.command }}",
+                                                                                                                    "rightValue":  "/analyze",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ],
+                                                                                             "combinator":  "and"
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "analyze"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  true,
+                                                                                                             "leftValue":  "",
+                                                                                                             "typeValidation":  "loose",
+                                                                                                             "version":  1
+                                                                                                         },
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "leftValue":  "={{ $(\u0027Parse Message\u0027).item.json.command }}",
+                                                                                                                    "rightValue":  "/create",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ],
+                                                                                             "combinator":  "and"
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "create"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  true,
+                                                                                                             "leftValue":  "",
+                                                                                                             "typeValidation":  "loose",
+                                                                                                             "version":  1
+                                                                                                         },
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "leftValue":  "={{ $(\u0027Parse Message\u0027).item.json.command }}",
+                                                                                                                    "rightValue":  "/script",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ],
+                                                                                             "combinator":  "and"
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "script"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  true,
+                                                                                                             "leftValue":  "",
+                                                                                                             "typeValidation":  "loose",
+                                                                                                             "version":  1
+                                                                                                         },
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "leftValue":  "={{ $(\u0027Parse Message\u0027).item.json.command }}",
+                                                                                                                    "rightValue":  "/history",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ],
+                                                                                             "combinator":  "and"
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "history"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  true,
+                                                                                                             "leftValue":  "",
+                                                                                                             "typeValidation":  "loose",
+                                                                                                             "version":  1
+                                                                                                         },
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "leftValue":  "={{ $(\u0027Parse Message\u0027).item.json.command }}",
+                                                                                                                    "rightValue":  "__callback_plan__",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ],
+                                                                                             "combinator":  "and"
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "callback_plan"
+                                                                      }
+                                                                  ]
+                                                   },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "router",
+                      "name":  "Command Router",
+                      "type":  "n8n-nodes-base.switch",
+                      "typeVersion":  3.4,
+                      "position":  [
+                                       912,
+                                       352
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "caseSensitive":  true,
+                                                                            "leftValue":  "",
+                                                                            "typeValidation":  "loose",
+                                                                            "version":  1
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "photo-check",
+                                                                                   "leftValue":  "={{ $(\u0027Parse Message\u0027).item.json.hasPhoto }}",
+                                                                                   "rightValue":  true,
+                                                                                   "operator":  {
+                                                                                                    "type":  "boolean",
+                                                                                                    "operation":  "true",
+                                                                                                    "singleValue":  true
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "check-photo",
+                      "name":  "Has Photo?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1136,
+                                       224
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "chatId":  "={{ $(\u0027Parse Message\u0027).item.json.chatId }}",
+                                         "text":  "📸 \u003cb\u003eCara Analisis Produk:\u003c/b\u003e\n\n1. Foto produk yang mau di-promote (close-up jelas)\n2. Upload foto ke chat ini\n3. Di caption foto, ketik: \u003ccode\u003e/analyze\u003c/code\u003e\n4. Tunggu ~5 detik, bot bakal balas analisis lengkap (nama, selling points, target market)\n\n✨ Setelah produk teranalisis, ketik /create untuk bikin content plan 7 atau 30 hari!",
+                                         "additionalFields":  {
+                                                                  "appendAttribution":  false,
+                                                                  "parse_mode":  "HTML"
+                                                              },
+                                         "resource":  "message",
+                                         "operation":  "sendMessage"
+                                     },
+                      "id":  "ask-photo",
+                      "name":  "Ask for Photo",
+                      "type":  "n8n-nodes-base.telegram",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       1360,
+                                       320
+                                   ],
+                      "credentials":  {
+                                          "telegramApi":  {
+                                                              "id":  "",
+                                                              "name":  "Telegram Bot"
+                                                          }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "={{ \"SELECT cp.id, cp.duration_days, cp.status, cp.created_at, cp.spreadsheet_url, p.name as product_name FROM public.content_plans cp JOIN public.products p ON cp.product_id = p.id WHERE cp.user_id = \u0027\" + $(\u0027Upsert User\u0027).item.json.id + \"\u0027 ORDER BY cp.created_at DESC LIMIT 5\" }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "get-history",
+                      "name":  "Get History",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1136,
+                                       608
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "",
+                                                           "name":  "Supabase DB (Telegram)"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const plans = $input.all().map(function(i){return i.json;});\nreturn [{ json: { plans: plans, count: plans.length } }];"
+                                     },
+                      "id":  "39549c37-1d75-4389-a261-a3910388c6ec",
+                      "name":  "Aggregate History",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1360,
+                                       608
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "chatId":  "={{ $(\u0027Parse Message\u0027).item.json.chatId }}",
+                                         "text":  "={{ \"📊 \u003cb\u003eRiwayat Content Plan Kamu:\u003c/b\u003e\\n\\n\" + ($json.plans.length \u003e 0 ? $json.plans.map((r,i) =\u003e (i+1) + \u0027. \u003cb\u003e\u0027 + (r.product_name||\u0027-\u0027) + \u0027\u003c/b\u003e — \u0027 + r.duration_days + \u0027 hari (\u0027 + r.status + \u0027)\u0027 + (r.spreadsheet_url ? \u0027\\n   \u003ca href=\"\u0027 + r.spreadsheet_url + \u0027\"\u003eBuka Spreadsheet\u003c/a\u003e\u0027 : \u0027\u0027)).join(\u0027\\n\\n\u0027) : \u0027Belum ada content plan. Ketik /create untuk mulai!\u0027) }}",
+                                         "additionalFields":  {
+                                                                  "appendAttribution":  false,
+                                                                  "parse_mode":  "HTML"
+                                                              },
+                                         "resource":  "message",
+                                         "operation":  "sendMessage"
+                                     },
+                      "id":  "send-history",
+                      "name":  "Send History",
+                      "type":  "n8n-nodes-base.telegram",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       1584,
+                                       608
+                                   ],
+                      "credentials":  {
+                                          "telegramApi":  {
+                                                              "id":  "",
+                                                              "name":  "Telegram Bot"
+                                                          }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ 'https://n8n.example.com' }}/webhook/analyze-product",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "x-internal-secret",
+                                                                                         "value":  "={{ 'YOUR_INTERNAL_SECRET' }}"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ chatId: $(\u0027Parse Message\u0027).item.json.chatId, telegramUserId: $(\u0027Parse Message\u0027).item.json.userId, dbUserId: $(\u0027Upsert User\u0027).item.json.id, photoFileId: $(\u0027Parse Message\u0027).item.json.photo.slice(-1)[0].file_id, description: $(\u0027Parse Message\u0027).item.json.args }) }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "call-wf02",
+                      "name":  "Call WF-02 Analyzer",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       1360,
+                                       128
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ 'https://n8n.example.com' }}/webhook/generate-content-plan",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "x-internal-secret",
+                                                                                         "value":  "={{ 'YOUR_INTERNAL_SECRET' }}"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ chatId: $(\u0027Parse Message\u0027).item.json.chatId, telegramUserId: $(\u0027Parse Message\u0027).item.json.userId, dbUserId: $(\u0027Upsert User\u0027).item.json.id, durationDays: $(\u0027Parse Message\u0027).item.json.durationDays }) }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "call-wf03",
+                      "name":  "Call WF-03 Content Plan",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       1360,
+                                       800
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ \u0027https://api.telegram.org/bot\u0027 + 'YOUR_TELEGRAM_BOT_TOKEN' + \u0027/sendMessage\u0027 }}",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ chat_id: $(\u0027Parse Message\u0027).item.json.chatId, text: \u0027📅 *Pilih durasi content plan:*\\n\\nMau buat plan untuk berapa hari?\u0027, parse_mode: \u0027Markdown\u0027, reply_markup: { inline_keyboard: [[{ text: \u0027📅 7 Hari\u0027, callback_data: \u0027plan_7\u0027 }, { text: \u0027📆 30 Hari\u0027, callback_data: \u0027plan_30\u0027 }]] } }) }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "6e196b54-2a6b-4194-b645-042cb4ce30a2",
+                      "name":  "Send Duration Choice",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       1136,
+                                       416
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ \u0027https://api.telegram.org/bot\u0027 + 'YOUR_TELEGRAM_BOT_TOKEN' + \u0027/answerCallbackQuery\u0027 }}",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ callback_query_id: $(\u0027Parse Message\u0027).item.json.callbackQueryId, text: $(\u0027Parse Message\u0027).item.json.durationDays + \u0027 hari dipilih! Sedang generate...\u0027 }) }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "04fabc3f-65c5-4eca-b762-bd52d5fc50f6",
+                      "name":  "Answer Callback",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       1136,
+                                       800
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ \u0027https://api.telegram.org/bot\u0027 + 'YOUR_TELEGRAM_BOT_TOKEN' + \u0027/sendMessage\u0027 }}",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ chat_id: $(\u0027Parse Message\u0027).item.json.chatId, text: \u0027Halo \u003cb\u003e\u0027 + ($(\u0027Parse Message\u0027).item.json.username || \u0027User\u0027) + \u0027\u003c/b\u003e! 👋\\n\\nSelamat datang di \u003cb\u003eMR. PLANNER\u003c/b\u003e — AI Content Planner untuk TikTok Affiliator!\\n\\n\u003cb\u003e✨ Cara Pakai:\u003c/b\u003e\\n📸 Kirim foto produk + caption /analyze\\n📅 /create — Buat content plan 7/30 hari\\n📊 /history — Riwayat plan\\n\\nAtau gunakan tombol di bawah:\u0027, parse_mode: \u0027HTML\u0027, reply_markup: { inline_keyboard: [[{ text: \u0027📅 Plan 7 Hari\u0027, callback_data: \u0027plan_7\u0027 }, { text: \u0027📆 Plan 30 Hari\u0027, callback_data: \u0027plan_30\u0027 }], [{ text: \u0027📊 Riwayat\u0027, callback_data: \u0027show_history\u0027 }, { text: \u0027📸 Cara Analisis\u0027, callback_data: \u0027show_analyze_help\u0027 }]] } }) }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "830ae242-3bf5-444e-98f0-d881d1e5ba57",
+                      "name":  "Send Start Message",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       1136,
+                                       32
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Telegram Trigger":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Parse Message",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Parse Message":  {
+                                              "main":  [
+                                                           [
+                                                               {
+                                                                   "node":  "Upsert User",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                                       ]
+                                          },
+                        "Upsert User":  {
+                                            "main":  [
+                                                         [
+                                                             {
+                                                                 "node":  "Command Router",
+                                                                 "type":  "main",
+                                                                 "index":  0
+                                                             }
+                                                         ]
+                                                     ]
+                                        },
+                        "Command Router":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Send Start Message",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ],
+                                                            [
+                                                                {
+                                                                    "node":  "Has Photo?",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ],
+                                                            [
+                                                                {
+                                                                    "node":  "Send Duration Choice",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ],
+                                                            [
+
+                                                            ],
+                                                            [
+                                                                {
+                                                                    "node":  "Get History",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ],
+                                                            [
+                                                                {
+                                                                    "node":  "Answer Callback",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           },
+                        "Has Photo?":  {
+                                           "main":  [
+                                                        [
+                                                            {
+                                                                "node":  "Call WF-02 Analyzer",
+                                                                "type":  "main",
+                                                                "index":  0
+                                                            }
+                                                        ],
+                                                        [
+                                                            {
+                                                                "node":  "Ask for Photo",
+                                                                "type":  "main",
+                                                                "index":  0
+                                                            }
+                                                        ]
+                                                    ]
+                                       },
+                        "Answer Callback":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Call WF-03 Content Plan",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Get History":  {
+                                            "main":  [
+                                                         [
+                                                             {
+                                                                 "node":  "Aggregate History",
+                                                                 "type":  "main",
+                                                                 "index":  0
+                                                             }
+                                                         ]
+                                                     ]
+                                        },
+                        "Aggregate History":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Send History",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false,
+                     "binaryMode":  "separate"
+                 }
 }
